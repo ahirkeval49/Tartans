@@ -14,6 +14,8 @@ def get_program_data():
     try:
         base_url = "https://engineering.cmu.edu"
         source_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
+        source_url = "https://engineering.cmu.edu/education/index.html"
+        source_url = "https://engineering.cmu.edu/education/index.html"
         
         response = requests.get(source_url, timeout=10)
         response.raise_for_status()
