@@ -4,47 +4,62 @@ import numpy as np
 from bs4 import BeautifulSoup
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
+from urllib.parse import urljoin
 
 # Configuration
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
+CACHE_EXPIRATION = 86400  # 24 hours in seconds
 
-# Web Scraper with Error Handling
+@st.cache_data(ttl=CACHE_EXPIRATION)
 def get_program_data():
     try:
         base_url = "https://engineering.cmu.edu"
         source_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
-        source_url = "https://engineering.cmu.edu/education/index.html"
-        source_url = "https://engineering.cmu.edu/education/index.html"
         
         response = requests.get(source_url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
         programs = []
-        for li in soup.select('div.content-asset li'):
-            if not li.a or not li.a.get('href'):
-                continue
-                
-            program_url = f"{base_url}{li.a['href']}" if li.a['href'].startswith('/') else li.a['href']
-            
+        program_cards = soup.select('div.program-card:not(.program-card-header)')
+        
+        for card in program_cards:
             try:
+                link = card.select_one('a.button')
+                if not link or not link.get('href'):
+                    continue
+                    
+                program_url = urljoin(base_url, link['href'])
+                program_name = card.select_one('h3').text.strip()
+                
                 program_response = requests.get(program_url, timeout=15)
                 program_soup = BeautifulSoup(program_response.text, 'html.parser')
                 
+                # Improved content extraction
+                description = program_soup.select_one('div.program-overview').get_text(' ', strip=True) if program_soup.select_one('div.program-overview') else ''
+                
+                curriculum = program_soup.find(['h2', 'h3'], string=lambda t: t and 'curriculum' in t.lower())
+                courses = '\n'.join([li.text.strip() for li in curriculum.find_next('ul').select('li')]) if curriculum else ''
+                
+                admission = program_soup.find(['h2', 'h3'], string=lambda t: t and 'admission' in t.lower())
+                admission_text = admission.find_next('div').get_text(' ', strip=True) if admission else ''
+                
+                contact = program_soup.find(['h2', 'h3'], string=lambda t: t and 'contact' in t.lower())
+                contact_text = contact.find_next('div').get_text(' ', strip=True) if contact else ''
+                
                 programs.append({
-                    'name': li.a.text.strip(),
+                    'name': program_name,
                     'url': program_url,
-                    'description': ' '.join(p.text for p in program_soup.select('div.col-lg-8 p')),
-                    'courses': '\n'.join(program_soup.find('h2', string=lambda t: 'curriculum' in t.lower())
-                                       .find_next_sibling().stripped_strings) if program_soup.find('h2', string=lambda t: 'curriculum' in t.lower()) else '',
-                    'admission': program_soup.find('h2', string='Admission Requirements')
-                                   .find_next_sibling().get_text(' ') if program_soup.find('h2', string='Admission Requirements') else '',
-                    'contact': program_soup.find('h2', string='Contact Us')
-                                 .find_next_sibling().get_text('\n') if program_soup.find('h2', string='Contact Us') else ''
+                    'description': description,
+                    'courses': courses,
+                    'admission': admission_text,
+                    'contact': contact_text,
+                    'department': card.select_one('.program-department').text.strip() if card.select_one('.program-department') else ''
                 })
             except Exception as e:
-                st.error(f"Couldn't load {li.a.text.strip()}: {str(e)}")
+                st.error(f"Error processing {program_name}: {str(e)}")
+                continue
         
         return pd.DataFrame(programs)
     
@@ -52,7 +67,6 @@ def get_program_data():
         st.error(f"Failed to load program data: {str(e)}")
         return pd.DataFrame()
 
-# AI Services with Secure API Access
 @st.cache_data
 def get_ai_embedding(text):
     try:
@@ -63,72 +77,105 @@ def get_ai_embedding(text):
             timeout=20
         )
         return response.json()['data'][0]['embedding']
-    except:
+    except Exception as e:
+        st.error(f"Embedding error: {str(e)}")
         return None
 
 @st.cache_data
-def get_ai_advice(program_name, interest):
+def get_ai_analysis(program_name, query, context):
+    prompt = f"""Analyze this graduate program for a student interested in {query}:
+    
+    Program: {program_name}
+    Context: {context}
+    
+    Provide 3 concise recommendations in bullet points format:
+    - Why this program matches their interests
+    - Key preparation steps
+    - Potential career outcomes
+    """
+    
     try:
         response = requests.post(
             DEEPSEEK_API_URL,
             headers={"Authorization": f"Bearer {st.secrets.DEEPSEEK_KEY}"},
             json={
                 "model": "deepseek-chat",
-                "messages": [{
-                    "role": "user", 
-                    "content": f"Suggest preparation steps for {program_name} focusing on {interest}. Keep response under 100 words."
-                }],
-                "temperature": 0.4
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 300
             },
             timeout=25
         )
         return response.json()['choices'][0]['message']['content']
     except:
-        return "AI suggestions currently unavailable"
+        return "AI analysis currently unavailable"
 
-# Main Application
 def main():
-    st.set_page_config(page_title="CMU Engineering Advisor", layout="wide")
-    st.title("🎓 CMU Graduate Program Finder")
-    st.write("Discover programs matching your academic interests")
+    st.set_page_config(page_title="CMU Engineering Advisor Pro", layout="wide")
+    st.title("🔍 CMU Graduate Program Matchmaker")
+    st.write("Discover your ideal engineering graduate program using AI-powered matching")
     
-    # Load and process data
-    with st.spinner("Loading latest program information..."):
+    # Load data
+    with st.spinner("🔄 Loading latest program information from CMU..."):
         df = get_program_data()
         if not df.empty:
             df['embedding'] = df.apply(
-                lambda x: get_ai_embedding(f"{x['name']} {x['description']} {x['courses']}"), 
+                lambda x: get_ai_embedding(f"Program: {x['name']}\nDescription: {x['description']}\nCourses: {x['courses']}"), 
                 axis=1
             )
     
     # Search interface
-    search_query = st.text_input("Describe your academic interests:", 
-                               placeholder="e.g., 'Robotics and machine learning in healthcare'")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search_query = st.text_input("Describe your academic/career interests:", 
+                                   placeholder="e.g., 'Applying machine learning to sustainable energy systems'")
+    with col2:
+        dept_filter = st.multiselect("Filter by department:", options=df['department'].unique() if not df.empty else [])
     
     if search_query and not df.empty:
-        with st.spinner("Analyzing programs..."):
+        with st.spinner("🔍 Finding best matches..."):
             query_embedding = get_ai_embedding(search_query)
             if query_embedding:
-                df['match_score'] = df['embedding'].apply(
+                # Filter dataframe
+                filtered_df = df[df['department'].isin(dept_filter)] if dept_filter else df
+                
+                # Calculate similarity
+                filtered_df['match_score'] = filtered_df['embedding'].apply(
                     lambda x: cosine_similarity([query_embedding], [x])[0][0] if x else 0
                 )
-                results = df.sort_values('match_score', ascending=False).head(3)
+                results = filtered_df.sort_values('match_score', ascending=False).head(5)
                 
                 # Display results
-                for _, program in results.iterrows():
-                    with st.expander(f"🌟 {program['name']} ({program['match_score']:.0%} Match)"):
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.markdown(f"**Description:** {program['description'][:500]}...")
+                st.subheader(f"Top {len(results)} Program Matches")
+                for idx, (_, program) in enumerate(results.iterrows(), 1):
+                    with st.expander(f"{idx}. 🥇 {program['name']} ({program['match_score']:.0%} Match)", expanded=idx==1):
+                        col_a, col_b = st.columns([3, 1])
+                        with col_a:
+                            st.markdown(f"**Department:** {program['department']}")
+                            st.markdown(f"**Program Overview:**\n{program['description']}")
+                            
                             if program['courses']:
-                                st.markdown(f"**Key Courses:**\n{program['courses'][:300]}...")
-                            st.markdown(f"**Admission Requirements:**\n{program['admission'][:600]}...")
-                        with col2:
-                            st.link_button("Program Website", program['url'])
-                            st.markdown(f"**Contact:**\n{program['contact'].split('\n')[0]}")
-                            st.markdown(f"**AI Preparation Tips:**\n{get_ai_advice(program['name'], search_query)}")
+                                with st.popover("📚 Key Courses"):
+                                    st.write(program['courses'])
+                            
+                            with st.popover("🎓 Admission Requirements"):
+                                st.write(program['admission'] or "Information not available")
+                            
+                        with col_b:
+                            st.link_button("🌐 Program Website", program['url'])
+                            st.markdown(f"**📧 Contact Info:**\n{program['contact'] or 'See website for details'}")
+                            
+                            # AI Analysis Section
+                            st.markdown("---")
+                            context = f"Description: {program['description'][:500]}\nCourses: {program['courses'][:300]}"
+                            analysis = get_ai_analysis(program['name'], search_query, context)
+                            st.markdown(f"**🤖 AI Program Analysis:**\n{analysis}")
             else:
-                st.error("Couldn't process your query. Please try different keywords.")
+                st.error("Error processing your query. Please try rephrasing.")
+    
+    # Add footer
+    st.markdown("---")
+    st.markdown("ℹ️ Data sourced from CMU Engineering website. Recommendations powered by DeepSeek AI.")
 
 if __name__ == "__main__":
     main()
