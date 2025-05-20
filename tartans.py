@@ -6,236 +6,107 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Deepseek API configuration
+# Configuration
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
 
-# Web Scraping Functions
+# Web Scraper
 def get_program_links():
-    url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html","https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
+    base_url = "https://engineering.cmu.edu"
+    source_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
     
-    programs = []
-    main_content = soup.find('div', class_='content-asset')
-    for item in main_content.find_all('li'):
-        link = item.find('a')
-        if link:
-            program_name = link.text.strip()
-            program_url = "https://engineering.cmu.edu","https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
-            programs.append((program_name, program_url))
-    return programs
+    try:
+        response = requests.get(source_url, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        return [
+            (li.a.text.strip(), f"{base_url}{li.a['href']}")
+            for li in soup.select('div.content-asset li')
+            if li.a and li.a.get('href')
+        ]
+    except Exception as e:
+        st.error(f"Failed to load programs: {str(e)}")
+        return []
 
+# Program Detail Extractor
 def get_program_details(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    
-    details = {
-        'description': '',
-        'courses': '',
-        'research_topics': '',
-        'admission_requirements': '',
-        'contact_info': ''
-    }
-    
-    # Extract main content
-    main_content = soup.find('div', class_='col-12 col-lg-8')
-    if main_content:
-        details['description'] = ' '.join(p.text for p in main_content.find_all('p'))
+    try:
+        response = requests.get(url, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extract courses and research topics using heuristic patterns
-        for h2 in main_content.find_all('h2'):
-            if 'curriculum' in h2.text.lower():
-                details['courses'] = ' '.join(h2.find_next_sibling().stripped_strings)
-            if 'research' in h2.text.lower():
-                details['research_topics'] = ' '.join(h2.find_next_sibling().stripped_strings)
-    
-    # Extract admission requirements
-    admission_section = soup.find('h2', string='Admission Requirements')
-    if admission_section:
-        details['admission_requirements'] = ' '.join(
-            admission_section.find_next_sibling().stripped_strings
-        )
-    
-    # Extract contact info
-    contact_section = soup.find('h2', string='Contact Us')
-    if contact_section:
-        details['contact_info'] = contact_section.find_next_sibling().get_text(separator='\n')
-    
-    return details
+        return {
+            'description': ' '.join(p.text for p in soup.select('div.col-lg-8 p')),
+            'courses': '\n'.join(soup.find('h2', string=lambda t: 'curriculum' in t.lower()).find_next_sibling().stripped_strings) if soup.find('h2', string=lambda t: 'curriculum' in t.lower()) else '',
+            'admission': soup.find('h2', string='Admission Requirements').find_next_sibling().get_text(' ') if soup.find('h2', string='Admission Requirements') else '',
+            'contact': soup.find('h2', string='Contact Us').find_next_sibling().get_text('\n') if soup.find('h2', string='Contact Us') else ''
+        }
+    except Exception as e:
+        st.error(f"Error loading {url}: {str(e)}")
+        return None
 
-# Deepseek AI Integration
-def get_deepseek_response(prompt, api_key):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    data = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.5
-    }
-    
-    response = requests.post(DEEPSEEK_API_URL, json=data, headers=headers)
-    if response.status_code == 200:
-        return response.json()['choices'][0]['message']['content']
-    return None
-
-def get_deepseek_embedding(text, api_key):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    data = {
-        "input": text,
-        "model": "deepseek-embedding"
-    }
-    
-    response = requests.post(DEEPSEEK_EMBEDDING_URL, json=data, headers=headers)
-    if response.status_code == 200:
-        return response.json()['data'][0]['embedding']
-    return None
-
-# Data Processing
+# AI Integration
 @st.cache_data
-def load_data(api_key):
-    programs = get_program_links()
-    data = []
-    
-    for name, url in programs:
-        details = get_program_details(url)
-        search_content = f"{name} {details['description']} {details['courses']} {details['research_topics']}"
-        
-        # Get Deepseek embedding
-        embedding = get_deepseek_embedding(search_content, api_key)
-        
-        data.append({
-            'Program Name': name,
-            'Description': details['description'],
-            'Courses': details['courses'],
-            'Research Topics': details['research_topics'],
-            'Admission Requirements': details['admission_requirements'],
-            'Contact Info': details['contact_info'],
-            'Program URL': url,
-            'Search Content': search_content,
-            'Embedding': embedding
-        })
-    
-    return pd.DataFrame(data)
-
-# Search Engine
-def create_search_index(df):
-    tfidf = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = tfidf.fit_transform(df['Search Content'])
-    return tfidf, tfidf_matrix
-
-# Streamlit UI
-st.title("CMU Engineering AI Program Advisor")
-st.subheader("Intelligent Graduate Program Finder with Deepseek AI")
-
-# Authentication
-api_key = st.sidebar.text_input("Deepseek API Key", type="password")
-
-if not api_key:
-    st.warning("Please enter your Deepseek API key to continue")
-    st.stop()
-
-# Load data with progress
-with st.spinner("Loading program data and AI models..."):
-    df = load_data(api_key)
-    tfidf, tfidf_matrix = create_search_index(df)
-
-# Search Interface
-col1, col2 = st.columns([3, 1])
-with col1:
-    query = st.text_input("Ask about programs (e.g., 'AI programs with robotics courses'):")
-
-with col2:
-    search_mode = st.selectbox("Search Mode", ["Hybrid", "Semantic", "Keyword"])
-
-# Process query
-if query:
-    with st.spinner("Analyzing your query with Deepseek AI..."):
-        # Get Deepseek query expansion
-        expanded_query = get_deepseek_response(
-            f"Expand this academic program search query with related terms: {query}",
-            api_key
+def get_ai_response(prompt):
+    try:
+        response = requests.post(
+            DEEPSEEK_API_URL,
+            headers={"Authorization": f"Bearer {st.secrets.DEEPSEEK_KEY}"},
+            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.4}
         )
-        
-        # Get embeddings
-        query_embedding = get_deepseek_embedding(query + " " + expanded_query, api_key)
-        tfidf_scores = cosine_similarity(tfidf.transform([query]), tfidf_matrix)[0]
-        
-        if query_embedding:
-            embedding_scores = cosine_similarity(
-                [query_embedding],
-                np.stack(df['Embedding'])
-            )[0]
-            
-            # Combine scores based on search mode
-            if search_mode == "Hybrid":
-                combined_scores = 0.6 * embedding_scores + 0.4 * tfidf_scores
-            elif search_mode == "Semantic":
-                combined_scores = embedding_scores
-            else:
-                combined_scores = tfidf_scores
-            
-            df['score'] = combined_scores
-            results = df.sort_values('score', ascending=False).head(5)
-            
-            # Generate AI summary
-            ai_analysis = get_deepseek_response(
-                f"Analyze these engineering programs {results[['Program Name', 'Description']].to_dict()} "
-                f"for query '{query}'. Provide 2-3 sentence summary.",
-                api_key
-            )
-            
-            st.subheader("AI Analysis")
-            st.markdown(f"*{ai_analysis}*")
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        st.error("AI service unavailable. Try again later.")
+        return ""
 
-else:
-    results = df
+@st.cache_data
+def get_ai_embedding(text):
+    try:
+        response = requests.post(
+            DEEPSEEK_EMBEDDING_URL,
+            headers={"Authorization": f"Bearer {st.secrets.DEEPSEEK_KEY}"},
+            json={"input": text, "model": "deepseek-embedding"}
+        )
+        return response.json()['data'][0]['embedding']
+    except:
+        return None
 
-# Display results
-st.subheader("Matching Programs")
-for _, row in results.iterrows():
-    with st.expander(f"**{row['Program Name']}** (Score: {row['score']:.2f})"):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(f"**Description:** {row['Description'][:500]}...")
-            if row['Courses']:
-                st.markdown(f"**Key Courses:** {row['Courses'][:300]}...")
-            if row['Research Topics']:
-                st.markdown(f"**Research Areas:** {row['Research Topics'][:300]}...")
-            st.markdown(f"**Admission Requirements:** {row['Admission Requirements'][:300]}...")
-        with col2:
-            st.markdown(f"[Program Website]({row['Program URL']})")
-            st.markdown(f"**Contact:**\n{row['Contact Info']}")
-            if query_embedding:
-                similar_courses = get_deepseek_response(
-                    f"Suggest related courses to {query} in {row['Program Name']}",
-                    api_key
-                )
-                st.markdown(f"**AI Course Suggestions:**\n{similar_courses}")
+# Core Application
+def main():
+    st.title("CMU Engineering Program Finder")
+    st.subheader("Search Graduate Programs by Interest Area")
+    
+    # Load data
+    with st.spinner("Loading program information..."):
+        programs = [
+            {**{'name': name, 'url': url}, **get_program_details(url)} 
+            for name, url in get_program_links()
+            if get_program_details(url)
+        ]
+        df = pd.DataFrame(programs)
+        df['embedding'] = df.apply(lambda x: get_ai_embedding(f"{x['name']} {x['description']} {x['courses']}"), axis=1)
+    
+    # Search interface
+    query = st.text_input("What are you interested in studying?")
+    if not query:
+        return
+    
+    # Process query
+    with st.spinner("Finding best matches..."):
+        query_embed = get_ai_embedding(query)
+        df['score'] = df['embedding'].apply(lambda x: cosine_similarity([query_embed], [x])[0][0] if x else 0)
+        results = df.sort_values('score', ascending=False).head(3)
+    
+    # Display results
+    for _, row in results.iterrows():
+        with st.expander(f"🎓 {row['name']} (Relevance: {row['score']:.0%})"):
+            st.markdown(f"**Description:** {row['description'][:400]}...")
+            st.markdown(f"**Sample Courses:**\n{row['courses'][:300]}...")
+            st.markdown(f"**Admission Requirements:**\n{row['admission'][:500]}...")
+            st.markdown(f"[Program Website]({row['url']}) | **Contact:** {row['contact'].split('\n')[0]}")
+            
+            advice = get_ai_response(f"Suggest preparation steps for {row['name']} focusing on {query}")
+            st.markdown(f"**AI Recommendation:**\n{advice}")
 
-# Add footer
-st.markdown("""
-<style>
-.footer {
-    position: fixed;
-    left: 0;
-    bottom: 0;
-    width: 100%;
-    background-color: white;
-    color: black;
-    text-align: center;
-}
-</style>
-<div class="footer">
-<p>Powered by Deepseek AI | Data sourced from CMU Engineering | Real-time AI analysis</p>
-</div>
-""", unsafe_allow_html=True)
+if __name__ == "__main__":
+    main()
