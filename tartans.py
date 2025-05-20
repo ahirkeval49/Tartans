@@ -17,54 +17,54 @@ def get_program_data():
         base_url = "https://engineering.cmu.edu"
         source_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
         
-        response = requests.get(source_url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
+        response = requests.get(source_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
         programs = []
-        program_cards = soup.select('div.program-card:not(.program-card-header)')
+        
+        # Updated selector for 2024 website
+        program_cards = soup.select('div.accordion-item.program-listing')
         
         for card in program_cards:
             try:
-                link = card.select_one('a.button')
-                if not link or not link.get('href'):
-                    continue
-                    
-                program_url = urljoin(base_url, link['href'])
                 program_name = card.select_one('h3').text.strip()
+                program_url = urljoin(base_url, card.select_one('a.button')['href'])
                 
-                program_response = requests.get(program_url, timeout=15)
+                # Get program details
+                program_response = requests.get(program_url, headers=headers, timeout=15)
                 program_soup = BeautifulSoup(program_response.text, 'html.parser')
                 
-                # Improved content extraction
-                description = program_soup.select_one('div.program-overview').get_text(' ', strip=True) if program_soup.select_one('div.program-overview') else ''
+                # Extract description
+                description = program_soup.find('div', class_='program-intro').get_text(' ', strip=True) if program_soup.find('div', class_='program-intro') else ''
                 
-                curriculum = program_soup.find(['h2', 'h3'], string=lambda t: t and 'curriculum' in t.lower())
-                courses = '\n'.join([li.text.strip() for li in curriculum.find_next('ul').select('li')]) if curriculum else ''
-                
-                admission = program_soup.find(['h2', 'h3'], string=lambda t: t and 'admission' in t.lower())
-                admission_text = admission.find_next('div').get_text(' ', strip=True) if admission else ''
-                
-                contact = program_soup.find(['h2', 'h3'], string=lambda t: t and 'contact' in t.lower())
-                contact_text = contact.find_next('div').get_text(' ', strip=True) if contact else ''
+                # Extract curriculum
+                courses = []
+                curriculum_section = program_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
+                if curriculum_section:
+                    for item in curriculum_section.find_next('div').select('li'):
+                        courses.append(item.get_text(' ', strip=True))
                 
                 programs.append({
                     'name': program_name,
                     'url': program_url,
                     'description': description,
-                    'courses': courses,
-                    'admission': admission_text,
-                    'contact': contact_text,
-                    'department': card.select_one('.program-department').text.strip() if card.select_one('.program-department') else ''
+                    'courses': '\n'.join(courses),
+                    'department': 'Engineering'  # Update based on actual data
                 })
+                
             except Exception as e:
-                st.error(f"Error processing {program_name}: {str(e)}")
+                print(f"Error processing {program_name}: {str(e)}")
                 continue
         
         return pd.DataFrame(programs)
     
     except Exception as e:
-        st.error(f"Failed to load program data: {str(e)}")
+        print(f"Scraping failed: {str(e)}")
         return pd.DataFrame()
 
 @st.cache_data
