@@ -139,8 +139,6 @@ def main():
     with col1:
         search_query = st.text_input("Describe your academic/career interests:", 
                                    placeholder="e.g., 'Applying machine learning to sustainable energy systems'")
-    with col2:
-        dept_filter = st.multiselect("Filter by department:", options=df['department'].unique() if not df.empty else [])
     
     if search_query and not df.empty:
         with st.spinner("🔍 Finding best matches..."):
