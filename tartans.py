@@ -13,59 +13,69 @@ CACHE_EXPIRATION = 86400  # 24 hours in seconds
 
 @st.cache_data(ttl=CACHE_EXPIRATION)
 def get_program_data():
+    base_url = "https://engineering.cmu.edu"
+    source_url = f"{base_url}/education/graduate-studies/programs/index.html"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    }
+
+    programs = []
     try:
-        base_url = "https://engineering.cmu.edu"
-        source_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.text, 'html.parser')
-        programs = []
-        
-        # Updated selector for 2024 website
-        program_cards = soup.select('div.accordion-item.program-listing')
-        
-        for card in program_cards:
-            try:
-                program_name = card.select_one('h3').text.strip()
-                program_url = urljoin(base_url, card.select_one('a.button')['href'])
-                
-                # Get program details
-                program_response = requests.get(program_url, headers=headers, timeout=15)
-                program_soup = BeautifulSoup(program_response.text, 'html.parser')
-                
-                # Extract description
-                description = program_soup.find('div', class_='program-intro').get_text(' ', strip=True) if program_soup.find('div', class_='program-intro') else ''
-                
-                # Extract curriculum
-                courses = []
-                curriculum_section = program_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
-                if curriculum_section:
-                    for item in curriculum_section.find_next('div').select('li'):
-                        courses.append(item.get_text(' ', strip=True))
-                
-                programs.append({
-                    'name': program_name,
-                    'url': program_url,
-                    'description': description,
-                    'courses': '\n'.join(courses),
-                    'department': 'Engineering'  # Update based on actual data
-                })
-                
-            except Exception as e:
-                print(f"Error processing {program_name}: {str(e)}")
-                continue
-        
-        return pd.DataFrame(programs)
-    
+
+        # Locate all program links
+        program_links = soup.select('div.accordion-item.program-listing a.button')
+        for link in program_links:
+            program_name = link.get_text(strip=True)
+            program_url = urljoin(base_url, link['href'])
+
+            # Fetch program-specific page
+            prog_response = requests.get(program_url, headers=headers, timeout=15)
+            prog_soup = BeautifulSoup(prog_response.text, 'html.parser')
+
+            # Extract description
+            description_tag = prog_soup.find('div', class_='program-intro')
+            description = description_tag.get_text(strip=True) if description_tag else ''
+
+            # Extract courses
+            courses = []
+            curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
+            if curriculum_header:
+                curriculum_div = curriculum_header.find_next_sibling('div')
+                if curriculum_div:
+                    courses = [li.get_text(strip=True) for li in curriculum_div.find_all('li')]
+
+            # Extract admission requirements
+            admission = ''
+            admission_header = prog_soup.find('h2', string=lambda t: t and 'admission' in t.lower())
+            if admission_header:
+                admission_div = admission_header.find_next_sibling('div')
+                if admission_div:
+                    admission = admission_div.get_text(strip=True)
+
+            # Extract contact information
+            contact = ''
+            contact_info = prog_soup.find(string=lambda t: t and ('@' in t or 'contact' in t.lower()))
+            if contact_info:
+                contact = contact_info.strip()
+
+            programs.append({
+                'name': program_name,
+                'url': program_url,
+                'description': description,
+                'courses': '\n'.join(courses),
+                'admission': admission,
+                'contact': contact,
+                'department': 'Engineering'  # Update based on actual data
+            })
+
     except Exception as e:
-        print(f"Scraping failed: {str(e)}")
-        return pd.DataFrame()
+        print(f"Scraping failed: {e}")
+
+    return pd.DataFrame(programs)
+
 
 @st.cache_data
 def get_ai_embedding(text):
