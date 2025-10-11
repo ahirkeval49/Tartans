@@ -37,7 +37,7 @@ def get_program_data():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
 
-    # FIX 1: Initialize programs list
+    # FIX 1: Initialize programs list with empty list
     programs = 
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
@@ -65,7 +65,7 @@ def get_program_data():
             description = description_tag.get_text(strip=True) if description_tag else ''
 
             # Extract courses
-            # FIX 2: Initialize courses list
+            # FIX 2: Initialize courses list with empty list
             courses =
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
             if curriculum_header:
