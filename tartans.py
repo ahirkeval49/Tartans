@@ -5,13 +5,13 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urljoin
 import pandera as pa
-from pandera import Check 
+from pandera import Check
 import time # NEW: Added for polite scraping (throttling)
 
 # Configuration
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
-CACHE_EXPIRATION = 86400  # 24 hours in seconds
+CACHE_EXPIRATION = 86400 # 24 hours in seconds
 
 # NEW: Define the explicit schema for College of Engineering program data
 # This ensures data quality and resilience against scraping errors
@@ -38,7 +38,8 @@ def get_program_data():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
 
-    programs=
+    # FIX 1: Initializing programs as an empty list
+    programs = 
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -65,12 +66,14 @@ def get_program_data():
             description = description_tag.get_text(strip=True) if description_tag else ''
 
             # Extract courses
-            courses =
+            # FIX 2: Initializing courses as an empty list for the current program
+            courses = 
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
             if curriculum_header:
                 curriculum_div = curriculum_header.find_next_sibling('div')
                 if curriculum_div:
-                    courses =
+                    # FIX 3: Assigning the result of the list comprehension to courses
+                    courses = 
 
             # Extract admission requirements
             admission = ''
