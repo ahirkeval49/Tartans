@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import numpy as np
 import pandas as pd
-from requests_html import HTMLSession # The new, powerful library
+from requests_html import HTMLSession # The powerful library for JS rendering
 import time
 from urllib.parse import urljoin
 
@@ -11,7 +11,6 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
 CACHE_EXPIRATION = 86400 # Cache data for 24 hours to keep it fresh but fast
 
-# --- NEW: Live scraper using requests-html to handle JavaScript ---
 @st.cache_data(ttl=CACHE_EXPIRATION)
 def get_live_program_data():
     """
@@ -29,7 +28,6 @@ def get_live_program_data():
         r = session.get(source_url, timeout=20)
         
         # This is the crucial step: render the JavaScript on the page.
-        # It will wait up to 30 seconds for the content to appear.
         r.html.render(sleep=5, timeout=30)
         
         program_links = r.html.find('div.program-listing h3 a')
@@ -42,10 +40,8 @@ def get_live_program_data():
 
         for link in program_links:
             program_name = link.text.strip()
-            # The link might be relative, so we join it with the base URL
             program_url = urljoin(base_url, list(link.absolute_links)[0])
             
-            # Use a new session for each sub-page to be safe
             sub_session = HTMLSession()
             sub_r = sub_session.get(program_url)
             
@@ -53,12 +49,10 @@ def get_live_program_data():
             description = description_tag.text.strip() if description_tag else 'No detailed description was found on the page.'
             
             programs.append({
-                'name': program_name,
-                'url': program_url,
-                'description': description,
+                'name': program_name, 'url': program_url, 'description': description,
                 'department': 'Engineering'
             })
-            time.sleep(0.5) # Be polite to the server
+            time.sleep(0.5)
 
     except Exception as e:
         st.error(f"A critical error occurred during scraping: {e}")
@@ -71,7 +65,6 @@ def get_live_program_data():
     st.success(f"Successfully scraped and processed {len(programs)} programs.")
     return pd.DataFrame(programs)
 
-# --- AI Functions (no changes needed here) ---
 @st.cache_data
 def get_ai_embedding(text):
     if 'DEEPSEEK_KEY' not in st.secrets or not st.secrets.DEEPSEEK_KEY:
@@ -105,7 +98,6 @@ def main():
     st.title("🔍 CMU College of Engineering Program Matchmaker")
     st.write("Discover your ideal engineering graduate program with live, automatically updated data.")
     
-    # This single function call now handles the live scraping and caching
     df = get_live_program_data()
     
     if 'DEEPSEEK_KEY' not in st.secrets or not st.secrets.DEEPSEEK_KEY:
@@ -116,7 +108,6 @@ def main():
         st.warning("Program data could not be loaded from the CMU website. The app cannot continue.")
         return
 
-    # Use session state to avoid re-calculating embeddings on every interaction within a session
     if 'embeddings_generated' not in st.session_state:
         with st.spinner("🧠 Preparing AI embeddings for programs (this happens once per session)..."):
             df['embedding'] = df.apply(lambda row: get_ai_embedding(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
