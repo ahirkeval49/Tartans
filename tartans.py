@@ -2,23 +2,76 @@ import streamlit as st
 import requests
 import numpy as np
 import pandas as pd
+from requests_html import HTMLSession # The new, powerful library
 import time
+from urllib.parse import urljoin
 
 # Configuration
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
+CACHE_EXPIRATION = 86400 # Cache data for 24 hours to keep it fresh but fast
 
-@st.cache_data
-def load_data_from_csv(file_path="cmu_programs.csv"):
+# --- NEW: Live scraper using requests-html to handle JavaScript ---
+@st.cache_data(ttl=CACHE_EXPIRATION)
+def get_live_program_data():
+    """
+    Scrapes the CMU website live using requests-html to handle dynamic JavaScript content.
+    The results are cached for performance and to avoid re-scraping on every interaction.
+    """
+    base_url = "https://engineering.cmu.edu"
+    source_url = f"{base_url}/education/graduate-studies/programs/index.html"
+    session = HTMLSession()
+    programs = []
+    
+    st.info("Fetching live data from CMU Engineering... This may take a moment on the first run.")
+    
     try:
-        df = pd.read_csv(file_path)
-        df['department'] = 'Engineering'
-        st.success(f"Successfully loaded {len(df)} programs from local data.")
-        return df
-    except FileNotFoundError:
-        st.error(f"Error: The data file '{file_path}' was not found. Please run the scraper first.")
+        r = session.get(source_url, timeout=20)
+        
+        # This is the crucial step: render the JavaScript on the page.
+        # It will wait up to 30 seconds for the content to appear.
+        r.html.render(sleep=5, timeout=30)
+        
+        program_links = r.html.find('div.program-listing h3 a')
+        
+        if not program_links:
+            st.error("Scraper Error: Could not find program links. The website's design may have changed.")
+            return pd.DataFrame()
+
+        st.info(f"Found {len(program_links)} programs. Scraping details...")
+
+        for link in program_links:
+            program_name = link.text.strip()
+            # The link might be relative, so we join it with the base URL
+            program_url = urljoin(base_url, list(link.absolute_links)[0])
+            
+            # Use a new session for each sub-page to be safe
+            sub_session = HTMLSession()
+            sub_r = sub_session.get(program_url)
+            
+            description_tag = sub_r.html.find('div.program-intro', first=True)
+            description = description_tag.text.strip() if description_tag else 'No detailed description was found on the page.'
+            
+            programs.append({
+                'name': program_name,
+                'url': program_url,
+                'description': description,
+                'department': 'Engineering'
+            })
+            time.sleep(0.5) # Be polite to the server
+
+    except Exception as e:
+        st.error(f"A critical error occurred during scraping: {e}")
         return pd.DataFrame()
 
+    if not programs:
+        st.error("Scraping finished, but no program data was collected.")
+        return pd.DataFrame()
+        
+    st.success(f"Successfully scraped and processed {len(programs)} programs.")
+    return pd.DataFrame(programs)
+
+# --- AI Functions (no changes needed here) ---
 @st.cache_data
 def get_ai_embedding(text):
     if 'DEEPSEEK_KEY' not in st.secrets or not st.secrets.DEEPSEEK_KEY:
@@ -50,21 +103,28 @@ def get_ai_analysis(program_name, program_description, query):
 def main():
     st.set_page_config(page_title="CMU Engineering Program Matchmaker", layout="wide")
     st.title("🔍 CMU College of Engineering Program Matchmaker")
-    st.write("Discover your ideal engineering graduate program with automatically updated data from the CMU website.")
+    st.write("Discover your ideal engineering graduate program with live, automatically updated data.")
     
-    if 'program_data' not in st.session_state:
-        df = load_data_from_csv()
-        if not df.empty:
-            with st.spinner("🧠 Preparing AI embeddings for programs (this happens once)..."):
-                df['embedding'] = df.apply(lambda row: get_ai_embedding(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
-                df.dropna(subset=['embedding'], inplace=True)
-                st.session_state.program_data = df
-        else: st.session_state.program_data = pd.DataFrame()
-    df = st.session_state.program_data
-
-    if df.empty:
-        st.warning("Program data is not available. The application cannot proceed.")
+    # This single function call now handles the live scraping and caching
+    df = get_live_program_data()
+    
+    if 'DEEPSEEK_KEY' not in st.secrets or not st.secrets.DEEPSEEK_KEY:
+        st.error("DeepSeek API Key is NOT found in secrets. Please add it to run the app.")
         return
+        
+    if df.empty:
+        st.warning("Program data could not be loaded from the CMU website. The app cannot continue.")
+        return
+
+    # Use session state to avoid re-calculating embeddings on every interaction within a session
+    if 'embeddings_generated' not in st.session_state:
+        with st.spinner("🧠 Preparing AI embeddings for programs (this happens once per session)..."):
+            df['embedding'] = df.apply(lambda row: get_ai_embedding(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
+            df.dropna(subset=['embedding'], inplace=True)
+            st.session_state.program_data = df
+            st.session_state.embeddings_generated = True
+    
+    df = st.session_state.program_data
 
     search_query = st.text_input("Describe your academic and career interests:", placeholder="e.g., 'robotics and automation in manufacturing'")
     
@@ -92,8 +152,9 @@ def main():
                         analysis = get_ai_analysis(program['name'], program['description'], search_query)
                         st.markdown(analysis)
             else: st.error("Could not process your query.")
+    
     st.markdown("---")
-    st.markdown("ℹ️ Data is updated weekly via an automated scraper. Recommendations are powered by DeepSeek AI.")
+    st.markdown("ℹ️ Data is scraped live from the CMU Engineering website and cached for 24 hours. Recommendations are powered by DeepSeek AI.")
 
 if __name__ == "__main__":
     main()
