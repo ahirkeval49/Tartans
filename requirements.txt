@@ -2,6 +2,6 @@ streamlit
 beautifulsoup4
 requests
 pandas
-scikit-learn>
+scikit-learn
 numpy
 Pandera
