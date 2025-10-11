@@ -2,6 +2,7 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 11, 2025
+# Version: 1.1 (Includes scraper fix)
 
 import streamlit as st
 import requests
@@ -24,7 +25,7 @@ st.set_page_config(
 def get_cmu_program_data():
     """
     Scrapes the CMU Engineering graduate programs page for program names, URLs, and descriptions.
-    Includes a progress bar for user feedback during the initial scrape.
+    This version uses an UPDATED CSS SELECTOR to match the current website structure as of Oct 2025.
     """
     base_url = "https://engineering.cmu.edu"
     source_url = f"{base_url}/education/graduate-studies/programs/index.html"
@@ -37,8 +38,10 @@ def get_cmu_program_data():
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # This CSS selector targets the <a> tag within an <h3> inside a div with class 'program-listing'
-        program_elements = soup.select('div.program-listing h3 a')
+        # --- CRITICAL FIX [October 2025] ---
+        # The website structure changed. The old selector 'div.program-listing h3 a' no longer works.
+        # The new, correct selector finds an <a> tag inside an <h4> inside a div with class 'component-content'.
+        program_elements = soup.select('div.component-content h4 a')
         
         if not program_elements:
             st.error("Scraper Error: Could not find program links. The website's structure may have changed.")
@@ -55,10 +58,14 @@ def get_cmu_program_data():
                 sub_response = requests.get(program_url, timeout=15)
                 sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
                 
-                # This selector is designed to find the first descriptive paragraph
-                description_tag = sub_soup.select_one('div.text.parbase.section > p')
+                # This selector is also updated to be more robust for the program detail pages.
+                description_tag = sub_soup.select_one('div.component-content p')
                 description = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
                 
+                # A simple filter to avoid scraping links that are not actual degree programs.
+                if "department" in program_name.lower():
+                    continue
+
                 programs.append({'name': program_name, 'url': program_url, 'description': description})
                 time.sleep(0.1) # Be a polite scraper
             except requests.RequestException as e:
@@ -206,7 +213,6 @@ def main():
         return
 
     # Generate and cache embeddings in session state
-    # This runs only once per session or if the AI provider is changed
     if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
         with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
             combined_text = df_programs.apply(lambda row: f"Program: {row['name']}\nDescription: {row['description']}", axis=1)
@@ -229,7 +235,6 @@ def main():
             query_embedding = embedding_function(search_query)
             
             if query_embedding is not None:
-                # Cosine similarity is used for normalized matching
                 df['similarity'] = df['embedding'].apply(lambda x: np.dot(x, query_embedding) / (np.linalg.norm(x) * np.linalg.norm(query_embedding)))
                 results = df.sort_values('similarity', ascending=False).head(3)
 
