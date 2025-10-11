@@ -1,4 +1,7 @@
 # app.py
+# CMU College of Engineering Program Navigator
+# Author: Gemini (Google AI)
+# Date: October 11, 2025
 
 import streamlit as st
 import requests
@@ -17,46 +20,53 @@ st.set_page_config(
 )
 
 # --- DATA SCRAPING & CACHING ---
-@st.cache_data(ttl=86400) # Cache data for 24 hours
+@st.cache_data(ttl=86400) # Cache data for 24 hours (86400 seconds)
 def get_cmu_program_data():
-    """Scrapes the CMU Engineering graduate programs page for program details."""
+    """
+    Scrapes the CMU Engineering graduate programs page for program names, URLs, and descriptions.
+    Includes a progress bar for user feedback during the initial scrape.
+    """
     base_url = "https://engineering.cmu.edu"
     source_url = f"{base_url}/education/graduate-studies/programs/index.html"
     programs = []
     
-    progress_text = "Fetching live data from CMU Engineering... This may take a moment on the first run."
-    progress_bar = st.progress(0, text=progress_text)
+    progress_bar = st.progress(0, text="Initializing live data fetch from CMU Engineering...")
 
     try:
         response = requests.get(source_url, timeout=20)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
+        # This CSS selector targets the <a> tag within an <h3> inside a div with class 'program-listing'
         program_elements = soup.select('div.program-listing h3 a')
         
         if not program_elements:
             st.error("Scraper Error: Could not find program links. The website's structure may have changed.")
+            progress_bar.empty()
             return pd.DataFrame()
 
         for i, link in enumerate(program_elements):
             program_name = link.text.strip()
             program_url = urljoin(base_url, link['href'])
             
+            progress_bar.progress((i + 1) / len(program_elements), text=f"Scraping: {program_name}")
+            
             try:
                 sub_response = requests.get(program_url, timeout=15)
                 sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
+                
+                # This selector is designed to find the first descriptive paragraph
                 description_tag = sub_soup.select_one('div.text.parbase.section > p')
                 description = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
                 
                 programs.append({'name': program_name, 'url': program_url, 'description': description})
-                time.sleep(0.1)
+                time.sleep(0.1) # Be a polite scraper
             except requests.RequestException as e:
                 st.warning(f"Could not fetch details for {program_name}: {e}")
 
-            progress_bar.progress((i + 1) / len(program_elements), text=f"Scraping: {program_name}")
-
     except requests.RequestException as e:
-        st.error(f"A critical error occurred during scraping the main page: {e}")
+        st.error(f"A critical error occurred while scraping the main program list: {e}")
+        progress_bar.empty()
         return pd.DataFrame()
     
     progress_bar.empty()
@@ -64,13 +74,14 @@ def get_cmu_program_data():
         st.error("Scraping finished, but no program data was collected.")
         return pd.DataFrame()
         
-    st.success(f"Successfully scraped and processed {len(programs)} programs.")
+    st.success(f"Successfully scraped and processed {len(programs)} graduate programs.")
     return pd.DataFrame(programs)
 
-# --- AI EMBEDDING FUNCTIONS (Using st.secrets) ---
+# --- AI PROVIDER FUNCTIONS (using st.secrets for keys) ---
+
 @st.cache_data
 def get_deepseek_embedding(text: str) -> np.ndarray:
-    """Generates an embedding using the DeepSeek API key from st.secrets."""
+    """Generates an embedding vector using the DeepSeek API."""
     api_key = st.secrets.get("DEEPSEEK_API_KEY")
     if not api_key:
         st.error("DeepSeek API Key is missing from secrets.")
@@ -90,7 +101,7 @@ def get_deepseek_embedding(text: str) -> np.ndarray:
 
 @st.cache_data
 def get_gemini_embedding(text: str) -> np.ndarray:
-    """Generates an embedding using the Gemini API key from st.secrets."""
+    """Generates an embedding vector using the Google Gemini API."""
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
         st.error("Gemini API Key is missing from secrets.")
@@ -103,13 +114,22 @@ def get_gemini_embedding(text: str) -> np.ndarray:
         st.error(f"Gemini Embedding API call failed: {e}")
         return None
 
-# --- AI ANALYSIS FUNCTIONS (Using st.secrets) ---
 @st.cache_data
 def get_deepseek_analysis(program_name: str, program_description: str, query: str) -> str:
-    """Generates analysis using the DeepSeek API key from st.secrets."""
+    """Generates a qualitative analysis using the DeepSeek Chat API."""
     api_key = st.secrets.get("DEEPSEEK_API_KEY")
-    if not api_key: return "AI analysis unavailable: DeepSeek API key missing from secrets."
-    prompt = f"As an expert CMU academic advisor, analyze the following graduate program for a prospective student interested in '{query}'.\n\n**Program:** {program_name}\n**Description:** {program_description}\n\nProvide a concise, 3-point analysis in markdown format:\n- **Program Fit:** Briefly explain why this program is a strong, moderate, or weak match for the student's interest in '{query}'.\n- **Key Application Skills:** What specific skills or experiences should the student highlight in their application?\n- **Potential Career Trajectory:** Mention one or two specific, high-potential job titles or industries this degree could lead to."
+    if not api_key: return "AI analysis unavailable: DeepSeek API key missing."
+    
+    prompt = f"""As an expert academic advisor for Carnegie Mellon's College of Engineering, analyze the following graduate program for a prospective student interested in '{query}'.
+
+    **Program:** {program_name}
+    **Description:** {program_description}
+
+    Provide a concise, 3-point analysis in markdown format:
+    - **Program Fit:** Briefly explain why this program is a strong, moderate, or weak match for the student's interest in '{query}'.
+    - **Key Application Skills:** What specific skills or experiences (e.g., Python, MATLAB, lab research, internships) should the student highlight in their application for this program?
+    - **Potential Career Trajectory:** Mention one or two specific, high-potential job titles or industries this degree could lead to, related to their interest.
+    """
     try:
         response = requests.post(
             "https://api.deepseek.com/v1/chat/completions",
@@ -120,62 +140,77 @@ def get_deepseek_analysis(program_name: str, program_description: str, query: st
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
-        return f"AI analysis failed: {e}"
+        return f"AI analysis failed to generate: {e}"
 
 @st.cache_data
 def get_gemini_analysis(program_name: str, program_description: str, query: str) -> str:
-    """Generates analysis using the Gemini API key from st.secrets."""
+    """Generates a qualitative analysis using the Google Gemini API."""
     api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key: return "AI analysis unavailable: Gemini API key missing from secrets."
+    if not api_key: return "AI analysis unavailable: Gemini API key missing."
+    
+    prompt = f"""As an expert academic advisor for Carnegie Mellon's College of Engineering, analyze the following graduate program for a prospective student interested in '{query}'.
+
+    **Program:** {program_name}
+    **Description:** {program_description}
+
+    Provide a concise, 3-point analysis in markdown format:
+    - **Program Fit:** Briefly explain why this program is a strong, moderate, or weak match for the student's interest in '{query}'.
+    - **Key Application Skills:** What specific skills or experiences (e.g., Python, MATLAB, lab research, internships) should the student highlight in their application for this program?
+    - **Potential Career Trajectory:** Mention one or two specific, high-potential job titles or industries this degree could lead to, related to their interest.
+    """
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-pro-latest')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"AI analysis failed: {e}"
+        return f"AI analysis failed to generate: {e}"
 
-# --- MAIN APP LOGIC ---
+# --- MAIN APPLICATION LOGIC ---
 def main():
     st.title("🔧 CMU College of Engineering Program Navigator")
-    st.markdown("Discover your ideal graduate program at Carnegie Mellon. Enter your interests below to get AI-powered recommendations based on live program data.")
+    st.markdown("Discover your ideal graduate program at Carnegie Mellon. Enter your interests below to get AI-powered recommendations based on live program data from the official CMU website.")
 
-    # --- Automatic AI Provider Selection from st.secrets ---
-    available_providers = []
-    if st.secrets.get("DEEPSEEK_API_KEY"):
-        available_providers.append("DeepSeek")
-    if st.secrets.get("GEMINI_API_KEY"):
-        available_providers.append("Google Gemini")
-
-    if not available_providers:
-        st.error("🛑 **Action Required:** No AI provider API key found in the app's secrets. Please ask the app administrator to add either a `DEEPSEEK_API_KEY` or `GEMINI_API_KEY`.")
-        st.stop()
-
+    # --- Sidebar for AI Provider Selection and Info ---
     with st.sidebar:
+        st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_column_width=True)
         st.header("AI Configuration")
+        
+        available_providers = []
+        if st.secrets.get("DEEPSEEK_API_KEY"):
+            available_providers.append("DeepSeek")
+        if st.secrets.get("GEMINI_API_KEY"):
+            available_providers.append("Google Gemini")
+
+        if not available_providers:
+            st.error("No AI provider API key found in app secrets. The app administrator must add a key to enable AI features.")
+            st.stop()
+
         if len(available_providers) > 1:
-            ai_provider = st.selectbox("Choose AI Provider", available_providers)
+            ai_provider = st.selectbox("Choose AI Provider", available_providers, help="Select the AI model to power the recommendations.")
         else:
             ai_provider = available_providers[0]
-            st.success(f"Using **{ai_provider}** API.")
+            st.info(f"Using **{ai_provider}** API for analysis.")
+        
+        st.markdown("---")
+        st.info("This tool uses live data and AI to help students explore programs. It is not an official admissions tool.")
 
-    # Select the correct functions based on the chosen provider
+    # Assign correct AI functions based on selection
     embedding_function = get_deepseek_embedding if ai_provider == "DeepSeek" else get_gemini_embedding
     analysis_function = get_deepseek_analysis if ai_provider == "DeepSeek" else get_gemini_analysis
 
-    # --- Load and process data ---
+    # Load program data from scraper
     df_programs = get_cmu_program_data()
     if df_programs.empty:
-        st.warning("Program data could not be loaded. The tool cannot proceed.")
+        st.warning("Program data could not be loaded. Please try again later.")
         return
 
-    # Generate embeddings if the provider changes or they haven't been generated yet
+    # Generate and cache embeddings in session state
+    # This runs only once per session or if the AI provider is changed
     if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
-        with st.spinner(f"🧠 Generating program embeddings using {ai_provider}..."):
-            df_programs['embedding'] = df_programs.apply(
-                lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"),
-                axis=1
-            )
+        with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
+            combined_text = df_programs.apply(lambda row: f"Program: {row['name']}\nDescription: {row['description']}", axis=1)
+            df_programs['embedding'] = combined_text.apply(embedding_function)
             df_programs.dropna(subset=['embedding'], inplace=True)
             st.session_state.program_data = df_programs
             st.session_state.embeddings_generated = True
@@ -186,41 +221,43 @@ def main():
     # --- User Input and Matching ---
     search_query = st.text_input(
         "**What are your academic and career interests?**",
-        placeholder="e.g., 'sustainable energy systems', 'machine learning in healthcare', 'robotics for space exploration'"
+        placeholder="e.g., 'robotics and automation in manufacturing', 'biomedical device design', 'machine learning for sustainable energy'"
     )
 
     if search_query:
-        with st.spinner(f"🔍 Analyzing your interests and finding the best matches..."):
+        with st.spinner(f"🔍 Analyzing your interests and finding the best matches with {ai_provider}..."):
             query_embedding = embedding_function(search_query)
             
             if query_embedding is not None:
-                # Cosine similarity calculation for better score normalization
+                # Cosine similarity is used for normalized matching
                 df['similarity'] = df['embedding'].apply(lambda x: np.dot(x, query_embedding) / (np.linalg.norm(x) * np.linalg.norm(query_embedding)))
                 results = df.sort_values('similarity', ascending=False).head(3)
 
                 st.subheader(f"Top 3 Program Matches for '{search_query}'")
                 
                 if results.empty:
-                    st.warning("No strong matches found. Try rephrasing your interests.")
+                    st.warning("No strong matches found. Try rephrasing your interests for a better result.")
                 else:
                     for i, (_, program) in enumerate(results.iterrows()):
                         st.markdown("---")
                         st.markdown(f"### **{i+1}. {program['name']}**")
+                        
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             st.progress(program['similarity'], text=f"**Match Score: {program['similarity']:.0%}**")
                         with col2:
                             st.link_button("Go to Program Website ↗️", program['url'], use_container_width=True)
                         
-                        with st.expander("**Program Overview**"):
+                        with st.expander("**Program Overview from CMU Website**"):
                             st.write(program['description'])
                         
                         with st.spinner("🤖 Generating AI Advisor analysis..."):
                             analysis = analysis_function(program['name'], program['description'], search_query)
                         
-                        st.markdown(analysis)
+                        st.markdown("**AI-Powered Advisor Analysis**")
+                        st.info(analysis)
             else:
-                st.error("Could not process your query. The embedding could not be generated.")
+                st.error("Could not process your query. The AI embedding could not be generated. Please check the status of the selected AI provider.")
 
 if __name__ == "__main__":
     main()
