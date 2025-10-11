@@ -28,7 +28,6 @@ def get_cmu_program_data():
     This version uses an UPDATED CSS SELECTOR to match the current website structure as of Oct 2025.
     """
     base_url = "https://engineering.cmu.edu"
-    source_url = f"{base_url}/education/graduate-studies/programs/index.html"
     programs = []
     
     progress_bar = st.progress(0, text="Initializing live data fetch from CMU Engineering...")
