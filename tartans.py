@@ -42,9 +42,15 @@ def get_program_data():
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        program_links = soup.select('div.accordion-item.program-listing a.button')
+        # --- FIX: THIS IS THE CORRECTED CSS SELECTOR ---
+        program_links = soup.select('div.program-listing h3 a')
         
         st.info(f"Found {len(program_links)} potential programs. Fetching details...")
+
+        # If no links are found, stop gracefully.
+        if not program_links:
+            st.warning("Could not find any program links on the page. The website structure may have changed.")
+            return pd.DataFrame()
 
         for link in program_links:
             program_name = link.get_text(strip=True)
@@ -56,7 +62,7 @@ def get_program_data():
             prog_soup = BeautifulSoup(prog_response.text, 'html.parser')
 
             description_tag = prog_soup.find('div', class_='program-intro')
-            description = description_tag.get_text(strip=True) if description_tag else ''
+            description = description_tag.get_text(strip=True) if description_tag else 'No description available.'
 
             courses = []
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
@@ -94,30 +100,24 @@ def get_program_data():
         st.error(f"General scraping failure: {e}")
         return pd.DataFrame()
 
+    if not programs:
+        st.error("Scraping finished, but no program data was collected.")
+        return pd.DataFrame()
+
     df = pd.DataFrame(programs)
     
-    # --- START: UPDATED VALIDATION AND DEBUGGING BLOCK ---
-    
-    # Add this line to see the data BEFORE validation
-    st.write("Data before validation:")
-    st.dataframe(df)
-
     # Validate and clean data using the defined schema
     try:
-        # The 'lazy=True' argument tells pandera to find ALL errors, not just the first one.
         validated_df = PROGRAM_SCHEMA.validate(df, lazy=True)
         st.success(f"Successfully validated and prepared {len(validated_df)} College of Engineering programs.")
         return validated_df
 
     except pa.errors.SchemaErrors as err:
-        st.error("Pandera Validation Failed! Some scraped data does not meet quality standards. See details below.")
-        
-        # This is the most useful part for debugging:
+        st.error("Pandera Validation Failed! Some scraped data does not meet quality standards.")
         st.write("Validation Failure Cases (Rows with bad data):")
         st.dataframe(err.failure_cases)
         
         st.warning("Attempting to clean the data by removing invalid rows...")
-        # Get the index of all rows that are valid
         valid_indices = df.index.difference(err.failure_cases.index)
         cleaned_df = df.loc[valid_indices]
         
@@ -127,8 +127,6 @@ def get_program_data():
         else:
             st.error("No valid data remained after cleaning. Cannot proceed.")
             return pd.DataFrame()
-            
-    # --- END: UPDATED VALIDATION AND DEBUGGING BLOCK ---
 
 
 @st.cache_data
@@ -141,8 +139,6 @@ def get_ai_embedding(text):
             timeout=20
         )
         response.raise_for_status()
-        # The embedding must be converted to a NumPy array for dot product calculation
-        # Deepseek API returns a list of embeddings, so we access the first one.
         return np.array(response.json()['data'][0]['embedding'])
     except Exception as e:
         st.error(f"Embedding error: {str(e)}")
