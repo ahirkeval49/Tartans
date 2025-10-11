@@ -1,17 +1,20 @@
-# app.py
+# tartans.py
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 11, 2025
-# Version: 1.1 (Includes scraper fix)
+# Version: 1.2 (Ensuring all imports are present)
 
+# --- All required imports MUST be at the top of the file ---
 import streamlit as st
-import requests
+import requests  # <--- This was the missing import
 import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 import time
 from urllib.parse import urljoin
 import google.generativeai as genai
+# --- End of imports ---
+
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -28,6 +31,7 @@ def get_cmu_program_data():
     This version uses an UPDATED CSS SELECTOR to match the current website structure as of Oct 2025.
     """
     base_url = "https://engineering.cmu.edu"
+    source_url = f"{base_url}/education/graduate-studies/programs/index.html"
     programs = []
     
     progress_bar = st.progress(0, text="Initializing live data fetch from CMU Engineering...")
@@ -37,9 +41,6 @@ def get_cmu_program_data():
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # --- CRITICAL FIX [October 2025] ---
-        # The website structure changed. The old selector 'div.program-listing h3 a' no longer works.
-        # The new, correct selector finds an <a> tag inside an <h4> inside a div with class 'component-content'.
         program_elements = soup.select('div.component-content h4 a')
         
         if not program_elements:
@@ -56,17 +57,14 @@ def get_cmu_program_data():
             try:
                 sub_response = requests.get(program_url, timeout=15)
                 sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
-                
-                # This selector is also updated to be more robust for the program detail pages.
                 description_tag = sub_soup.select_one('div.component-content p')
                 description = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
                 
-                # A simple filter to avoid scraping links that are not actual degree programs.
                 if "department" in program_name.lower():
                     continue
 
                 programs.append({'name': program_name, 'url': program_url, 'description': description})
-                time.sleep(0.1) # Be a polite scraper
+                time.sleep(0.1)
             except requests.RequestException as e:
                 st.warning(f"Could not fetch details for {program_name}: {e}")
 
@@ -177,7 +175,6 @@ def main():
     st.title("🔧 CMU College of Engineering Program Navigator")
     st.markdown("Discover your ideal graduate program at Carnegie Mellon. Enter your interests below to get AI-powered recommendations based on live program data from the official CMU website.")
 
-    # --- Sidebar for AI Provider Selection and Info ---
     with st.sidebar:
         st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_column_width=True)
         st.header("AI Configuration")
@@ -199,19 +196,16 @@ def main():
             st.info(f"Using **{ai_provider}** API for analysis.")
         
         st.markdown("---")
-        st.info("This tool uses live data and AI to help students explore programs. It is not an official admissions tool.")
+        st.info("This tool is a proof-of-concept and not an official admissions tool.")
 
-    # Assign correct AI functions based on selection
     embedding_function = get_deepseek_embedding if ai_provider == "DeepSeek" else get_gemini_embedding
     analysis_function = get_deepseek_analysis if ai_provider == "DeepSeek" else get_gemini_analysis
 
-    # Load program data from scraper
     df_programs = get_cmu_program_data()
     if df_programs.empty:
         st.warning("Program data could not be loaded. Please try again later.")
         return
 
-    # Generate and cache embeddings in session state
     if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
         with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
             combined_text = df_programs.apply(lambda row: f"Program: {row['name']}\nDescription: {row['description']}", axis=1)
@@ -223,7 +217,6 @@ def main():
     
     df = st.session_state.program_data
     
-    # --- User Input and Matching ---
     search_query = st.text_input(
         "**What are your academic and career interests?**",
         placeholder="e.g., 'robotics and automation in manufacturing', 'biomedical device design', 'machine learning for sustainable energy'"
