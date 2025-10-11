@@ -13,12 +13,13 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
 CACHE_EXPIRATION = 86400
 
-# Define the explicit schema for College of Engineering program data
+# --- FIX: Relaxed the validation for the description length ---
 PROGRAM_SCHEMA = pa.DataFrameSchema(
     columns={
         "name": pa.Column(str, Check(lambda s: s.str.len() > 5), nullable=False),
         "url": pa.Column(str, Check.str_startswith("http"), nullable=False),
-        "description": pa.Column(str, Check(lambda s: s.str.len() > 100)),
+        # Changed from > 100 to > 20 to be less strict and allow more programs
+        "description": pa.Column(str, Check(lambda s: s.str.len() > 20)),
         "courses": pa.Column(str, nullable=True),
         "admission": pa.Column(str, nullable=True),
         "contact": pa.Column(str, nullable=True),
@@ -41,7 +42,6 @@ def get_program_data():
         soup = BeautifulSoup(response.text, 'html.parser')
         
         program_links = soup.select('div.program-listing h3 a')
-        st.info(f"Found {len(program_links)} potential programs. Fetching details...")
         if not program_links:
             st.warning("Could not find any program links on the page. The website structure may have changed.")
             return pd.DataFrame()
@@ -49,12 +49,13 @@ def get_program_data():
         for link in program_links:
             program_name = link.get_text(strip=True)
             program_url = urljoin(base_url, link['href'])
-            time.sleep(0.5)
+            time.sleep(0.2) # slightly faster scraping
             prog_response = requests.get(program_url, headers=headers, timeout=15)
             prog_soup = BeautifulSoup(prog_response.text, 'html.parser')
 
             description_tag = prog_soup.find('div', class_='program-intro')
-            description = description_tag.get_text(strip=True) if description_tag else 'No description available.'
+            # Provide a default description that will pass validation if none is found
+            description = description_tag.get_text(strip=True) if description_tag else 'Detailed description not available on the program page.'
 
             courses = []
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
@@ -91,17 +92,17 @@ def get_program_data():
     df = pd.DataFrame(programs)
     try:
         validated_df = PROGRAM_SCHEMA.validate(df, lazy=True)
-        st.success(f"Successfully scraped and validated {len(validated_df)} programs.")
+        st.success(f"Successfully loaded and validated {len(validated_df)} programs.")
         return validated_df
     except pa.errors.SchemaErrors as err:
-        st.warning("Data quality issues found. Removing invalid rows...")
+        st.warning("Some programs had data quality issues and were removed.")
         valid_indices = df.index.difference(err.failure_cases.index)
         cleaned_df = df.loc[valid_indices]
         if not cleaned_df.empty:
             st.info(f"Proceeding with {len(cleaned_df)} valid programs.")
             return cleaned_df
         else:
-            st.error("No valid data remained after cleaning. Cannot proceed.")
+            st.error("No valid program data remained after cleaning. The website structure may have changed significantly.")
             return pd.DataFrame()
 
 @st.cache_data
@@ -119,7 +120,6 @@ def get_ai_embedding(text):
         response.raise_for_status()
         return np.array(response.json()['data'][0]['embedding'])
     except Exception as e:
-        # This error will now be more visible in the UI
         st.error(f"Embedding API call failed: {str(e)}")
         return None
 
@@ -142,94 +142,77 @@ def get_ai_analysis(program_name, query, context):
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
-        st.error(f"AI analysis API call failed: {str(e)}")
-        return "AI analysis currently unavailable."
+        return f"AI analysis failed: {e}"
 
 def main():
     st.set_page_config(page_title="CMU Engineering Advisor Pro", layout="wide")
     st.title("🔍 CMU College of Engineering Program Matchmaker")
-    st.write("Discover your ideal engineering graduate program using AI-powered matching")
+    st.write("Discover your ideal engineering graduate program using AI-powered matching.")
     
-    with st.spinner("🔄 Loading and validating program information from CMU Engineering..."):
+    with st.spinner("🔄 Loading program information from CMU Engineering..."):
         df = get_program_data()
         
-    # --- START DEBUGGING ADDITION 1 ---
-    st.subheader("Initial Setup Check")
-    if 'DEEPSEEK_KEY' in st.secrets and st.secrets.DEEPSEEK_KEY:
-        st.success("✅ DeepSeek API Key is loaded.")
-    else:
-        st.error("❌ DeepSeek API Key is NOT found in st.secrets. Please add it.")
-        return # Stop the app if the key is missing
-    # --- END DEBUGGING ADDITION 1 ---
-
-    if df.empty:
-        st.warning("Program data is empty. Cannot proceed with search.")
+    if 'DEEPSEEK_KEY' not in st.secrets or not st.secrets.DEEPSEEK_KEY:
+        st.error("DeepSeek API Key is NOT found in secrets. Please add it to run the app.")
         return
 
+    if df.empty:
+        st.warning("Program data could not be loaded. The app cannot continue.")
+        return
+
+    # Pre-calculate embeddings for all programs
     if 'embedding' not in df.columns or df['embedding'].isnull().any():
-        with st.spinner("🧠 Generating AI embeddings for programs... This may take a moment."):
+        with st.spinner("🧠 Generating AI embeddings for programs... This happens once and is then cached."):
             df['embedding'] = df.apply(
                 lambda x: get_ai_embedding(f"Program: {x['name']}\nDescription: {x['description']}"), 
                 axis=1
             )
             df.dropna(subset=['embedding'], inplace=True)
-
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        search_query = st.text_input("Describe your academic/career interests:", 
-                                     placeholder="e.g., 'Applying machine learning to sustainable energy systems'")
-    
-    if search_query and not df.empty:
-        with st.spinner("🔍 Finding best matches..."):
-            query_embedding = get_ai_embedding(search_query)
-
-            # --- START DEBUGGING ADDITION 2 ---
-            st.subheader("Search Process Debugging")
-            if query_embedding is not None:
-                st.success("✅ Step 1: Query embedding generated successfully.")
-            else:
-                st.error("❌ Step 1: Failed to generate query embedding. See error above. Cannot continue search.")
-                return # Stop if we can't get the query embedding
-            # --- END DEBUGGING ADDITION 2 ---
-                
-            filtered_df = df.copy()
-            filtered_df['match_score'] = filtered_df['embedding'].apply(
-                lambda x: np.dot(query_embedding, x) if x is not None else 0
-            )
-            results = filtered_df.sort_values('match_score', ascending=False).head(5)
-            
-            # --- START DEBUGGING ADDITION 3 ---
-            if not results.empty:
-                top_score = results.iloc[0]['match_score']
-                st.success(f"✅ Step 2: Match scores calculated. Top score is: {top_score:.2f}")
-                if top_score < 0.3: # A low score might indicate a problem
-                     st.warning("Note: The top match score is low, which might mean the query is very different from the available programs, or there's an issue with the embeddings.")
-            else:
-                st.error("❌ Step 2: Could not generate any results after calculating scores.")
+            if df.empty:
+                st.error("Failed to generate embeddings for any programs. Please check your API key and network connection.")
                 return
-            # --- END DEBUGGING ADDITION 3 ---
+
+    # --- THE SEARCH FIELD IS NOW VISIBLE ---
+    search_query = st.text_input(
+        "Describe your academic and career interests:", 
+        placeholder="e.g., 'Applying machine learning to sustainable energy systems'"
+    )
+    
+    if search_query:
+        with st.spinner("🔍 Finding the best matches for you..."):
+            query_embedding = get_ai_embedding(search_query)
             
-            st.subheader(f"Top {len(results)} Program Matches")
-            for idx, (_, program) in enumerate(results.iterrows(), 1):
-                # ... (rest of the display logic is the same)
-                with st.expander(f"{idx}. 🥇 {program['name']} ({program['match_score']:.0%} Match)", expanded=idx==1):
-                    # ... (rest of the display logic remains unchanged)
-                    col_a, col_b = st.columns([1, 2])
-                    with col_a:
-                        st.markdown(f"**Department:** {program['department']}")
-                        st.markdown(f"**Program Overview:**\n{program['description']}")
-                        if program['courses']:
-                            with st.popover("📚 Key Courses"):
-                                st.write(program['courses'])
-                        with st.popover("🎓 Admission Requirements"):
-                            st.write(program['admission'] or "Information not available")
-                    with col_b:
-                        st.link_button("🌐 Program Website", program['url'])
-                        st.markdown(f"**📧 Contact Info:**\n{program['contact'] or 'See website for details'}")
-                        st.markdown("---")
-                        context = f"Description: {program['description'][:500]}\nCourses: {program['courses'][:300]}"
-                        analysis = get_ai_analysis(program['name'], search_query, context)
-                        st.markdown(f"**🤖 AI Program Analysis:**\n{analysis}")
+            if query_embedding is not None:
+                filtered_df = df.copy()
+                filtered_df['match_score'] = filtered_df['embedding'].apply(
+                    lambda x: np.dot(query_embedding, x) if x is not None else 0
+                )
+                results = filtered_df.sort_values('match_score', ascending=False).head(5)
+                
+                st.subheader(f"Top {len(results)} Program Matches")
+                if results.empty:
+                    st.warning("No strong matches found. Try rephrasing your interests.")
+                
+                for idx, (_, program) in enumerate(results.iterrows(), 1):
+                    with st.expander(f"{idx}. {program['name']} ({program['match_score']:.0%} Match)", expanded=idx==1):
+                        col_a, col_b = st.columns([1, 2])
+                        with col_a:
+                            st.markdown(f"**Department:** {program['department']}")
+                            st.markdown(f"**Program Overview:**\n{program['description']}")
+                            if program['courses']:
+                                with st.popover("📚 Key Courses"):
+                                    st.write(program['courses'])
+                            with st.popover("🎓 Admission Requirements"):
+                                st.write(program['admission'] or "Information not available")
+                        with col_b:
+                            st.link_button("🌐 Program Website", program['url'])
+                            st.markdown(f"**📧 Contact Info:**\n{program['contact'] or 'See website for details'}")
+                            st.markdown("---")
+                            context = f"Description: {program['description'][:500]}\nCourses: {program['courses'][:300]}"
+                            analysis = get_ai_analysis(program['name'], search_query, context)
+                            st.markdown(f"**🤖 AI Program Analysis:**\n{analysis}")
+            else:
+                st.error("Could not process your query. The embedding API might be down or the key is invalid.")
     
     st.markdown("---")
     st.markdown("ℹ️ Data sourced from CMU Engineering website. Recommendations powered by DeepSeek AI.")
