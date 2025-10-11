@@ -38,7 +38,7 @@ def get_program_data():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
 
-    programs =
+    programs=
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
