@@ -38,7 +38,7 @@ def get_program_data():
     }
 
     # FIX 1: Initialize programs list with empty list
-    programs = 
+    programs
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
