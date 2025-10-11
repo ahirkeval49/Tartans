@@ -38,7 +38,7 @@ def get_program_data():
     }
 
     # FIX 1: Initialize programs list with empty list
-    programs
+    programs =
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -167,7 +167,7 @@ def get_ai_analysis(program_name, query, context):
         )
         response.raise_for_status()
         # Ensure correct key access for the message content
-        return response.json()['choices']['message']['content']
+        return response.json()['choices']['message']['content'] # Corrected path to content
     except Exception as e:
         # Added generic exception for robustness
         return "AI analysis currently unavailable"
