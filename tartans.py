@@ -167,7 +167,7 @@ def get_ai_analysis(program_name, query, context):
         )
         response.raise_for_status()
         # Ensure correct key access for the message content
-        return response.json()['choices']['message']['content'] # Corrected path to content
+        return response.json()['choices']['message']['content']
     except Exception as e:
         # Added generic exception for robustness
         return "AI analysis currently unavailable"
