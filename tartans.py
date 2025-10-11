@@ -6,15 +6,14 @@ import pandas as pd
 from urllib.parse import urljoin
 import pandera as pa
 from pandera import Check
-import time # NEW: Added for polite scraping (throttling)
+import time # Added for polite scraping (throttling)
 
 # Configuration
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_EMBEDDING_URL = "https://api.deepseek.com/v1/embeddings"
 CACHE_EXPIRATION = 86400 # 24 hours in seconds
 
-# NEW: Define the explicit schema for College of Engineering program data
-# This ensures data quality and resilience against scraping errors
+# Define the explicit schema for College of Engineering program data
 PROGRAM_SCHEMA = pa.DataFrameSchema(
     columns={
         "name": pa.Column(str, Check(lambda s: s.str.len() > 5), nullable=False), # Program name must be substantial
@@ -38,7 +37,7 @@ def get_program_data():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
 
-    # FIX 1: Initializing programs as an empty list
+    # FIX 1: Initialize programs list
     programs = 
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
@@ -66,14 +65,14 @@ def get_program_data():
             description = description_tag.get_text(strip=True) if description_tag else ''
 
             # Extract courses
-            # FIX 2: Initializing courses as an empty list for the current program
-            courses = 
+            # FIX 2: Initialize courses list
+            courses =
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
             if curriculum_header:
                 curriculum_div = curriculum_header.find_next_sibling('div')
                 if curriculum_div:
-                    # FIX 3: Assigning the result of the list comprehension to courses
-                    courses = 
+                    # FIX 3: Assigning the list comprehension result to courses
+                    courses =
 
             # Extract admission requirements
             admission = ''
@@ -109,7 +108,7 @@ def get_program_data():
 
     df = pd.DataFrame(programs)
     
-    # NEW: Validate and clean data using the defined schema
+    # Validate and clean data using the defined schema
     try:
         # Validate and coerce types, dropping records that fail schema checks
         df = PROGRAM_SCHEMA.validate(df, lazy=True).dropna(subset=['name', 'description'])
@@ -134,6 +133,7 @@ def get_ai_embedding(text):
         )
         # Ensure the response is successful and contains data
         response.raise_for_status()
+        # The embedding must be converted to a NumPy array for dot product calculation
         return np.array(response.json()['data']['embedding'])
     except Exception as e:
         st.error(f"Embedding error: {str(e)}")
@@ -166,8 +166,10 @@ def get_ai_analysis(program_name, query, context):
             timeout=25
         )
         response.raise_for_status()
+        # Ensure correct key access for the message content
         return response.json()['choices']['message']['content']
-    except:
+    except Exception as e:
+        # Added generic exception for robustness
         return "AI analysis currently unavailable"
 
 def main():
