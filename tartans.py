@@ -36,7 +36,7 @@ def get_program_data():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     }
-    programs=
+    programs = [] # FIX 1: Initialized as an empty list
     try:
         response = requests.get(source_url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -63,14 +63,14 @@ def get_program_data():
             description = description_tag.get_text(strip=True) if description_tag else ''
 
             # Extract courses
-            # FIX 2: Initialize courses list with empty list
-            courses =
+            courses = [] # FIX 2: Initialize courses list with empty list
             curriculum_header = prog_soup.find('h2', string=lambda t: t and 'curriculum' in t.lower())
             if curriculum_header:
                 curriculum_div = curriculum_header.find_next_sibling('div')
                 if curriculum_div:
                     # FIX 3: Assigning the list comprehension result to courses
-                    courses =
+                    # We assume courses are in list items <li>, which is common.
+                    courses = [item.get_text(strip=True) for item in curriculum_div.find_all('li')]
 
             # Extract admission requirements
             admission = ''
@@ -132,7 +132,7 @@ def get_ai_embedding(text):
         # Ensure the response is successful and contains data
         response.raise_for_status()
         # The embedding must be converted to a NumPy array for dot product calculation
-        return np.array(response.json()['data']['embedding'])
+        return np.array(response.json()['data'][0]['embedding'])
     except Exception as e:
         st.error(f"Embedding error: {str(e)}")
         return None
@@ -165,9 +165,10 @@ def get_ai_analysis(program_name, query, context):
         )
         response.raise_for_status()
         # Ensure correct key access for the message content
-        return response.json()['choices']['message']['content']
+        return response.json()['choices'][0]['message']['content']
     except Exception as e:
         # Added generic exception for robustness
+        st.error(f"AI analysis error: {str(e)}")
         return "AI analysis currently unavailable"
 
 def main():
@@ -187,18 +188,19 @@ def main():
     if not df.empty:
         # Calculate embeddings if not already present (only happens on first run due to caching)
         if 'embedding' not in df.columns or df['embedding'].isnull().any():
-             df['embedding'] = df.apply(
-                lambda x: get_ai_embedding(f"Program: {x['name']}\nDescription: {x['description']}\nCourses: {x['courses']}"), 
-                axis=1
-            )
-             df.dropna(subset=['embedding'], inplace=True) # Remove rows where embedding generation failed
+            with st.spinner("🧠 Generating AI embeddings for programs..."):
+                df['embedding'] = df.apply(
+                    lambda x: get_ai_embedding(f"Program: {x['name']}\nDescription: {x['description']}\nCourses: {x['courses']}"), 
+                    axis=1
+                )
+                df.dropna(subset=['embedding'], inplace=True) # Remove rows where embedding generation failed
 
     
     # Search interface
     col1, col2 = st.columns([1, 2])
     with col1:
         search_query = st.text_input("Describe your academic/career interests:", 
-                                   placeholder="e.g., 'Applying machine learning to sustainable energy systems'")
+                                     placeholder="e.g., 'Applying machine learning to sustainable energy systems'")
     
     # The department filter section has been removed as per the user's explicit request 
     # to focus only on the College of Engineering data (which is filtered in get_program_data).
