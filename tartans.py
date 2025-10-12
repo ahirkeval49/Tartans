@@ -2,9 +2,8 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 11, 2025
-# Version: 1.3 (Adds User-Agent to scraper and fixes deprecation warning)
+# Version: 1.4 (Multi-URL scraping for resilience and comprehensiveness)
 
-# --- All required imports MUST be at the top of the file ---
 import streamlit as st
 import requests
 import numpy as np
@@ -13,8 +12,6 @@ from bs4 import BeautifulSoup
 import time
 from urllib.parse import urljoin
 import google.generativeai as genai
-# --- End of imports ---
-
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -24,68 +21,83 @@ st.set_page_config(
 )
 
 # --- DATA SCRAPING & CACHING ---
-@st.cache_data(ttl=86400) # Cache data for 24 hours (86400 seconds)
+@st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes the CMU Engineering graduate programs page.
-    Includes a User-Agent header to prevent being blocked by the server.
+    Scrapes a PREDEFINED LIST of CMU Engineering pages to find all graduate programs.
+    This approach is more resilient to website structure changes than a single entry point.
     """
     base_url = "https://engineering.cmu.edu"
-    source_url = f"{base_url}/education/graduate-studies/programs/index.html"
-    programs = []
+    # --- NEW: List of all URLs to scrape ---
+    source_urls = [
+        "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cee.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ece.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/epp.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ini.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/iii.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/mse.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
+    ]
     
-    # --- FIX #1: Add a User-Agent header to mimic a real browser ---
+    all_programs = {} # Use a dictionary to automatically handle duplicates by URL
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
-    progress_bar = st.progress(0, text="Initializing live data fetch from CMU Engineering...")
+    progress_bar = st.progress(0, text="Initializing live data fetch from multiple CMU pages...")
 
-    try:
-        # --- FIX #1 (continued): Use the headers in the request ---
-        response = requests.get(source_url, headers=headers, timeout=20)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        program_elements = soup.select('div.component-content h4 a')
-        
-        if not program_elements:
-            st.error("Scraper Error: Could not find program links. The website's structure may have changed or access is blocked.")
-            progress_bar.empty()
-            return pd.DataFrame()
-
-        for i, link in enumerate(program_elements):
-            program_name = link.text.strip()
-            program_url = urljoin(base_url, link['href'])
+    for i, page_url in enumerate(source_urls):
+        progress_bar.progress((i + 1) / len(source_urls), text=f"Scanning page: {page_url.split('/')[-1]}")
+        try:
+            response = requests.get(page_url, headers=headers, timeout=20)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            progress_bar.progress((i + 1) / len(program_elements), text=f"Scraping: {program_name}")
+            program_elements = soup.select('div.component-content h4 a')
             
-            try:
-                sub_response = requests.get(program_url, headers=headers, timeout=15)
-                sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
-                description_tag = sub_soup.select_one('div.component-content p')
-                description = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
+            for link in program_elements:
+                program_name = link.text.strip()
+                program_url = urljoin(base_url, link['href'])
                 
-                if "department" in program_name.lower():
+                # Filter out non-program links
+                if "department" in program_name.lower() or program_url == base_url:
                     continue
+                
+                # Use URL as key to prevent duplicates
+                if program_url not in all_programs:
+                     all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': ''}
 
-                programs.append({'name': program_name, 'url': program_url, 'description': description})
-                time.sleep(0.1)
-            except requests.RequestException as e:
-                st.warning(f"Could not fetch details for {program_name}: {e}")
-
-    except requests.RequestException as e:
-        st.error(f"A critical error occurred while scraping the main program list: {e}")
-        progress_bar.empty()
-        return pd.DataFrame()
+        except requests.RequestException as e:
+            st.warning(f"Could not fetch or process page {page_url}: {e}")
+            continue
     
+    # --- Now fetch descriptions for the unique programs found ---
+    programs_list = list(all_programs.values())
+    total_programs = len(programs_list)
+    for i, program in enumerate(programs_list):
+        progress_bar.progress((i + 1) / total_programs, text=f"Fetching details for: {program['name']}")
+        try:
+            sub_response = requests.get(program['url'], headers=headers, timeout=15)
+            sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
+            description_tag = sub_soup.select_one('div.component-content p')
+            program['description'] = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
+            time.sleep(0.1)
+        except requests.RequestException:
+            program['description'] = 'Could not retrieve description.'
+            
     progress_bar.empty()
-    if not programs:
-        st.error("Scraping finished, but no program data was collected.")
+    if not programs_list:
+        st.error("Scraping finished, but no program data was collected. The website structure may have changed on all pages.")
         return pd.DataFrame()
         
-    st.success(f"Successfully scraped and processed {len(programs)} graduate programs.")
-    return pd.DataFrame(programs)
+    st.success(f"Successfully scraped and processed {len(programs_list)} unique graduate programs.")
+    return pd.DataFrame(programs_list)
 
 # --- AI PROVIDER FUNCTIONS (using st.secrets for keys) ---
 
@@ -141,7 +153,6 @@ def main():
     st.markdown("Discover your ideal graduate program at Carnegie Mellon. Enter your interests below to get AI-powered recommendations based on live program data from the official CMU website.")
 
     with st.sidebar:
-        # --- FIX #2: Changed use_column_width to use_container_width ---
         st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_container_width=True)
         st.header("AI Configuration")
         
