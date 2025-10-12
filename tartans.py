@@ -28,8 +28,7 @@ def get_cmu_program_data():
     Treats the main index page as a "critical" source for error reporting.
     """
     # --- BUG FIX: Renamed variable to source_urls and defined a separate base_url string ---
-    base_url = "https://engineering.cmu.edu" 
-    source_urls = [
+   critical_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
