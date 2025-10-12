@@ -133,7 +133,7 @@ def get_cmu_program_data():
     st.success(f"Successfully scraped and indexed {len(programs_list)} distinct graduate program variants.")
     return pd.DataFrame(programs_list)
 
-# --- AI PROVIDER FUNCTIONS (No change needed here, keeping for completeness) ---
+# --- AI PROVIDER FUNCTIONS (Updated DeepSeek Embedding) ---
 
 def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], model: str) -> Optional[np.ndarray]:
     for attempt in range(3):
@@ -145,7 +145,8 @@ def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], mo
             if attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
-            st.error(f"{model} Embedding API call failed after multiple retries: {e}")
+            # Note: This is where the 404 error was logged for DeepSeek
+            st.error(f"{model} Embedding API call failed after multiple retries: {e}") 
             return None
         except Exception as e:
             st.error(f"{model} Embedding API processing failed: {e}")
@@ -156,7 +157,10 @@ def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], mo
 def get_deepseek_embedding(text: str) -> Optional[np.ndarray]:
     api_key = st.secrets.get("DEEPSEEK_API_KEY")
     if not api_key: return None
-    payload = {"input": text, "model": "deepseek-embedding"}
+    # FIX: Correcting the payload:
+    # 1. The 'input' must be a list of strings (even if it's just one).
+    # 2. The 'model' name must be the correct identifier for the DeepSeek embedding model.
+    payload = {"input": [text], "model": "deepseek-ai/deepseek-text"} 
     endpoint = "https://api.deepseek.com/v1/embeddings"
     return _call_embedding_api(api_key, endpoint, payload, "DeepSeek")
 
@@ -265,8 +269,8 @@ def main():
     st.subheader("Tell us about yourself:")
     
     common_majors = ["Computer Science", "Electrical Engineering", "Mechanical Engineering", "Civil Engineering", 
-                    "Chemical Engineering", "Biomedical Engineering", "Materials Science", "Physics", 
-                    "Mathematics", "Industrial Design/Art", "Other Engineering"]
+                     "Chemical Engineering", "Biomedical Engineering", "Materials Science", "Physics", 
+                     "Mathematics", "Industrial Design/Art", "Other Engineering"]
     
     with st.form("student_profile_form"):
         col1, col2 = st.columns(2)
