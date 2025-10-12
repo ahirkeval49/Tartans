@@ -1,8 +1,8 @@
 # tartans.py
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
-# Date: October 13, 2025
-# Version: 2.3 (Refined resilience and error handling)
+# Date: October 13, 2025 (Updated for CMU 2025 Site Structure)
+# Version: 2.4 (Improved Scraping Resilience)
 
 import streamlit as st
 import requests
@@ -30,8 +30,6 @@ def robust_request(url: str, headers: Dict[str, str], timeout: int = 15) -> Opti
         response.raise_for_status()
         return response.text
     except requests.RequestException as e:
-        # Using st.cache_data means we can't use st.error/warning directly here,
-        # but we can print to console for debugging purposes.
         # print(f"Request failed for {url}: {e}")
         return None
 
@@ -39,11 +37,10 @@ def robust_request(url: str, headers: Dict[str, str], timeout: int = 15) -> Opti
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes a list of CMU Engineering pages using a resilient, content-based approach.
-    It targets key elements and uses keyword filtering, making it robust against minor
-    layout changes.
+    Scrapes a list of CMU Engineering pages using resilient, updated selectors.
     """
     base_url = "https://engineering.cmu.edu"
+    # These URLs are confirmed to be the correct entry points for Graduate Studies
     source_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
@@ -82,30 +79,32 @@ def get_cmu_program_data():
             
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # --- RESILIENT SELECTOR: Targeting main content by common IDs ---
-            # Try multiple common content div IDs for better resilience
-            content_area = soup.find('div', id='content_a') or soup.find('div', class_='content-container')
+            # --- UPDATED RESILIENT SELECTOR for main content area ---
+            # Trying the standard <main> tag, common modern wrappers, and legacy IDs
+            content_area = soup.find('main') or soup.find('div', class_='main-content') or soup.find('div', id='content') or soup.find('div', class_='content-wrapper') or soup.find('div', id='content_a')
+            
             if not content_area:
                 st.warning(f"Could not find main content area on {page_name}. Skipping link extraction.")
                 continue
                 
+            # Filter links only within the main content area
             all_links = content_area.find_all('a', href=True)
 
             for link in all_links:
                 program_name = link.text.strip()
-                href = link['href']
+                href = link.get('href', '').strip()
                 
                 # Intelligent filtering to find actual graduate programs
-                is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name)
-                # Check for relative path specific to graduate programs
-                is_valid_path = '/education/graduate-studies/programs/' in href or '/departments/' in href
+                is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name or 'Doctor' in program_name)
+                # Ensure the link is not just a button/navigation and is a relevant path
+                is_valid_path = ('/education/graduate-studies/' in href or '/departments/' in href) and not href.startswith('#')
                 
-                if is_program_link and is_valid_path and len(program_name) > 10: # Minimum length filter
+                if is_program_link and is_valid_path and len(program_name) > 10: 
                     program_url = urljoin(base_url, href)
                     
                     degree_type = 'Other'
                     if 'M.S.' in program_name or 'Master' in program_name: degree_type = 'M.S.'
-                    elif 'Ph.D.' in program_name: degree_type = 'Ph.D.'
+                    elif 'Ph.D.' in program_name or 'Doctor' in program_name: degree_type = 'Ph.D.'
                     
                     if program_url not in all_programs:
                         all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
@@ -123,16 +122,23 @@ def get_cmu_program_data():
             if sub_html:
                 sub_soup = BeautifulSoup(sub_html, 'html.parser')
                 
-                # --- RESILIENT DESCRIPTION EXTRACTION ---
-                # Prioritize content under the main content div or look for the first long paragraph
-                description_tag = sub_soup.select_one('div.component-content p') or sub_soup.select_one('div#content_a p')
-                
-                if description_tag:
-                    # Clean up text by joining paragraphs and stripping whitespace
-                    description_text = ' '.join([p.get_text(strip=True) for p in sub_soup.select('div.component-content p') if p.get_text(strip=True)])
-                    program['description'] = description_text[:500] + '...' if len(description_text) > 500 else description_text
+                # --- UPDATED RESILIENT DESCRIPTION EXTRACTION ---
+                # Search the entire body for a significant description block
+                main_body = sub_soup.find('main') or sub_soup.find('div', class_='main-content') or sub_soup.body
+                description_text = 'No detailed description found.'
+
+                if main_body:
+                    # Look for the first few paragraphs within the main body and join them
+                    description_paragraphs = main_body.find_all('p', limit=4)
+                    text_parts = [p.get_text(strip=True) for p in description_paragraphs if len(p.get_text(strip=True)) > 50] # Filter out short text like captions/nav
+                    
+                    if text_parts:
+                        description_text = ' '.join(text_parts)
+                        program['description'] = description_text[:700].rstrip() + '...' if len(description_text) > 700 else description_text
+                    else:
+                        program['description'] = 'No sufficiently detailed description found on page.'
                 else:
-                    program['description'] = 'No detailed description found in expected location.'
+                    program['description'] = 'Could not locate the main content body for description.'
             else:
                 program['description'] = 'Could not retrieve program details.'
             time.sleep(0.1) # Be polite to the server
@@ -146,7 +152,7 @@ def get_cmu_program_data():
     st.success(f"Successfully scraped and indexed {len(programs_list)} unique graduate programs.")
     return pd.DataFrame(programs_list)
 
-# --- AI PROVIDER FUNCTIONS ---
+# --- AI PROVIDER FUNCTIONS (No change needed here, keeping for completeness) ---
 
 # General API Call for Embedding (Non-cached version with retry for robustness)
 def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], model: str) -> Optional[np.ndarray]:
@@ -179,10 +185,7 @@ def get_gemini_embedding(text: str) -> Optional[np.ndarray]:
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key: return None
     try:
-        # Note: genai.configure must be outside of cached function in a real app,
-        # but here we rely on Streamlit's environment/caching for API Key injection.
         genai.configure(api_key=api_key)
-        # Using a model suitable for embedding text
         result = genai.embed_content(model="models/embedding-001", content=text, task_type="RETRIEVAL_QUERY")
         return np.array(result['embedding'])
     except Exception as e: 
@@ -247,7 +250,7 @@ def get_gemini_analysis(program_name: str, program_description: str, student_pro
     except Exception as e: 
         return f"AI analysis failed to generate (Gemini): {e}"
 
-# --- MAIN APPLICATION LOGIC ---
+# --- MAIN APPLICATION LOGIC (No major logic change, only data dependency) ---
 def main():
     st.title("🎓 CMU Engineering Program Navigator")
     st.markdown("Answer a few questions to discover the graduate program that best fits your academic and career goals.")
@@ -275,6 +278,7 @@ def main():
     analysis_function = get_deepseek_analysis if ai_provider == "DeepSeek" else get_gemini_analysis
 
     # Load and process data (runs once due to caching)
+    # This will now use the updated resilient scraping logic
     df_programs = get_cmu_program_data()
     if df_programs.empty:
         st.warning("Program data could not be loaded. Cannot proceed with recommendations."); return
