@@ -2,7 +2,7 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 12, 2025
-# Version: 2.1 (Interactive Questionnaire with Latest Scraper Fix & Debugging)
+# Version: 2.2 (Implements a resilient, content-based scraper)
 
 import streamlit as st
 import requests
@@ -25,7 +25,8 @@ st.set_page_config(
 def get_cmu_program_data():
     """
     Scrapes a PREDEFINED LIST of CMU Engineering pages.
-    This version uses an UPDATED CSS SELECTOR and includes debugging output if it fails.
+    NEW RESILIENT STRATEGY: Selects all links in the main content area and filters them
+    based on keywords, which is much more robust than relying on fragile HTML structure.
     """
     base_url = "https://engineering.cmu.edu"
     source_urls = [
@@ -55,28 +56,31 @@ def get_cmu_program_data():
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # --- CRITICAL FIX [October 2025] ---
-            # This selector is more specific to the container holding program links.
-            program_elements = soup.select('div.text-media-right h4 a')
+            # --- RESILIENT SELECTOR ---
+            # 1. Target the main content container by its unique ID.
+            content_area = soup.find('div', id='content_a')
+            if not content_area:
+                continue # Skip this page if the main content div isn't found
             
-            # --- DEBUGGING STEP ---
-            # If no elements are found on the main page, show what the scraper sees.
-            if not program_elements and page_url == critical_url:
-                st.warning("DEBUG: The primary scraper found no program links. The HTML content received by the script was:")
-                st.code(response.text[:1000]) # Display the first 1000 characters of the HTML
+            # 2. Find ALL links within that container.
+            all_links = content_area.find_all('a', href=True)
 
-            for link in program_elements:
+            for link in all_links:
                 program_name = link.text.strip()
-                program_url = urljoin(base_url, link['href'])
+                href = link['href']
                 
-                if "department" in program_name.lower() or program_url == f"{base_url}/": continue
+                # 3. Intelligently filter the links to find actual programs.
+                is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name)
+                is_valid_path = href.startswith('/education/graduate-studies/programs/')
                 
-                degree_type = 'Other'
-                if 'M.S.' in program_name or 'Master' in program_name: degree_type = 'M.S.'
-                elif 'Ph.D.' in program_name: degree_type = 'Ph.D.'
-                
-                if program_url not in all_programs:
-                    all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
+                if is_program_link and is_valid_path:
+                    program_url = urljoin(base_url, href)
+                    degree_type = 'Other'
+                    if 'M.S.' in program_name or 'Master' in program_name: degree_type = 'M.S.'
+                    elif 'Ph.D.' in program_name: degree_type = 'Ph.D.'
+                    
+                    if program_url not in all_programs:
+                        all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
         except requests.RequestException as e:
             if page_url == critical_url: st.error(f"Critical source failed: Could not fetch main program page. Error: {e}")
             else: st.warning(f"Could not fetch or process page {page_url.split('/')[-1]}: {e}")
