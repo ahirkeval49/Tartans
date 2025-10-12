@@ -40,7 +40,7 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
- 
+    ]
     
     all_programs = {} # Use a dictionary to automatically handle duplicates by URL
     
