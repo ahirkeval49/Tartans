@@ -1,8 +1,8 @@
 # tartans.py
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
-# Date: October 13, 2025 (Updated for CMU 2025 Site Structure)
-# Version: 2.4 (Improved Scraping Resilience)
+# Date: October 13, 2025 (Updated for Maximum Scraping Resilience)
+# Version: 2.5 (Aggressive Selector Strategy)
 
 import streamlit as st
 import requests
@@ -37,10 +37,11 @@ def robust_request(url: str, headers: Dict[str, str], timeout: int = 15) -> Opti
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes a list of CMU Engineering pages using resilient, updated selectors.
+    Scrapes a list of CMU Engineering pages using an aggressive, content-keyword-based strategy 
+    that ignores specific structural classes where possible.
     """
     base_url = "https://engineering.cmu.edu"
-    # These URLs are confirmed to be the correct entry points for Graduate Studies
+    # These URLs are the correct entry points for Graduate Studies at CMU Engineering
     source_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
@@ -65,9 +66,9 @@ def get_cmu_program_data():
     with status_expander:
         progress_bar = st.progress(0, text="Starting live data fetch...")
         
-        # --- PHASE 1: COLLECT PROGRAM LINKS ---
+        # --- PHASE 1: COLLECT PROGRAM LINKS (Aggressive Search) ---
         st.markdown("---")
-        st.caption("Phase 1: Collecting Program Links from Index Pages")
+        st.caption("Phase 1: Collecting Program Links from Index Pages (Broad Search)")
         for i, page_url in enumerate(source_urls):
             page_name = page_url.split('/')[-1]
             progress_bar.progress((i + 1) / len(source_urls) / 2, text=f"Scanning link sources: {page_name}")
@@ -79,27 +80,23 @@ def get_cmu_program_data():
             
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # --- UPDATED RESILIENT SELECTOR for main content area ---
-            # Trying the standard <main> tag, common modern wrappers, and legacy IDs
-            content_area = soup.find('main') or soup.find('div', class_='main-content') or soup.find('div', id='content') or soup.find('div', class_='content-wrapper') or soup.find('div', id='content_a')
+            # AGGRESSIVE SEARCH: Find ALL links in the body
+            all_links = soup.body.find_all('a', href=True) if soup.body else []
             
-            if not content_area:
-                st.warning(f"Could not find main content area on {page_name}. Skipping link extraction.")
-                continue
-                
-            # Filter links only within the main content area
-            all_links = content_area.find_all('a', href=True)
+            if not all_links:
+                st.warning(f"No links found in the body of {page_name}.")
 
+            links_found_on_page = 0
             for link in all_links:
                 program_name = link.text.strip()
                 href = link.get('href', '').strip()
                 
-                # Intelligent filtering to find actual graduate programs
+                # Check for graduate program keywords
                 is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name or 'Doctor' in program_name)
-                # Ensure the link is not just a button/navigation and is a relevant path
-                is_valid_path = ('/education/graduate-studies/' in href or '/departments/' in href) and not href.startswith('#')
+                # Ensure the link is not a hash, a general image link, or too short
+                is_valid_path = ('/education/graduate-studies/' in href or '/departments/' in href) and len(program_name) > 10 and not href.startswith('#')
                 
-                if is_program_link and is_valid_path and len(program_name) > 10: 
+                if is_program_link and is_valid_path: 
                     program_url = urljoin(base_url, href)
                     
                     degree_type = 'Other'
@@ -108,6 +105,11 @@ def get_cmu_program_data():
                     
                     if program_url not in all_programs:
                         all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
+                        links_found_on_page += 1
+            
+            if links_found_on_page == 0:
+                st.info(f"0 program links identified on {page_name}. (Links must contain M.S./Ph.D. keywords.)")
+                
             time.sleep(0.1) # Be polite to the server
 
         # --- PHASE 2: FETCH DESCRIPTIONS ---
@@ -122,23 +124,20 @@ def get_cmu_program_data():
             if sub_html:
                 sub_soup = BeautifulSoup(sub_html, 'html.parser')
                 
-                # --- UPDATED RESILIENT DESCRIPTION EXTRACTION ---
-                # Search the entire body for a significant description block
-                main_body = sub_soup.find('main') or sub_soup.find('div', class_='main-content') or sub_soup.body
-                description_text = 'No detailed description found.'
-
-                if main_body:
-                    # Look for the first few paragraphs within the main body and join them
-                    description_paragraphs = main_body.find_all('p', limit=4)
-                    text_parts = [p.get_text(strip=True) for p in description_paragraphs if len(p.get_text(strip=True)) > 50] # Filter out short text like captions/nav
-                    
-                    if text_parts:
-                        description_text = ' '.join(text_parts)
-                        program['description'] = description_text[:700].rstrip() + '...' if len(description_text) > 700 else description_text
-                    else:
-                        program['description'] = 'No sufficiently detailed description found on page.'
+                # AGGRESSIVE DESCRIPTION EXTRACTION: Look for first few long paragraphs anywhere on the page
+                description_text = 'No sufficiently detailed description found on page.'
+                
+                # Search across all paragraphs in the body
+                description_paragraphs = sub_soup.body.find_all('p', limit=6) if sub_soup.body else []
+                text_parts = [p.get_text(strip=True) for p in description_paragraphs if len(p.get_text(strip=True)) > 50]
+                
+                if text_parts:
+                    description_text = ' '.join(text_parts)
+                    # Limit and clean up the description
+                    program['description'] = description_text[:700].rstrip() + '...' if len(description_text) > 700 else description_text
                 else:
-                    program['description'] = 'Could not locate the main content body for description.'
+                    program['description'] = 'No sufficiently detailed description found on page.'
+
             else:
                 program['description'] = 'Could not retrieve program details.'
             time.sleep(0.1) # Be polite to the server
@@ -154,7 +153,6 @@ def get_cmu_program_data():
 
 # --- AI PROVIDER FUNCTIONS (No change needed here, keeping for completeness) ---
 
-# General API Call for Embedding (Non-cached version with retry for robustness)
 def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], model: str) -> Optional[np.ndarray]:
     for attempt in range(3):
         try:
@@ -163,7 +161,7 @@ def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], mo
             return np.array(response.json()['data'][0]['embedding'])
         except requests.exceptions.RequestException as e:
             if attempt < 2:
-                time.sleep(2 ** attempt) # Exponential backoff
+                time.sleep(2 ** attempt)
                 continue
             st.error(f"{model} Embedding API call failed after multiple retries: {e}")
             return None
@@ -192,7 +190,6 @@ def get_gemini_embedding(text: str) -> Optional[np.ndarray]:
         st.error(f"Gemini Embedding API call failed: {e}")
         return None
 
-# General API Call for Analysis (Non-cached version with retry for robustness)
 def _call_analysis_api(api_key: str, endpoint: str, payload: Dict[str, Any], model: str) -> str:
     for attempt in range(3):
         try:
@@ -201,7 +198,7 @@ def _call_analysis_api(api_key: str, endpoint: str, payload: Dict[str, Any], mod
             return response.json()['choices'][0]['message']['content']
         except requests.exceptions.RequestException as e:
             if attempt < 2:
-                time.sleep(2 ** attempt) # Exponential backoff
+                time.sleep(2 ** attempt)
                 continue
             return f"AI analysis unavailable: {model} API call failed after multiple retries: {e}"
         except Exception as e:
@@ -250,7 +247,7 @@ def get_gemini_analysis(program_name: str, program_description: str, student_pro
     except Exception as e: 
         return f"AI analysis failed to generate (Gemini): {e}"
 
-# --- MAIN APPLICATION LOGIC (No major logic change, only data dependency) ---
+# --- MAIN APPLICATION LOGIC ---
 def main():
     st.title("🎓 CMU Engineering Program Navigator")
     st.markdown("Answer a few questions to discover the graduate program that best fits your academic and career goals.")
@@ -278,7 +275,6 @@ def main():
     analysis_function = get_deepseek_analysis if ai_provider == "DeepSeek" else get_gemini_analysis
 
     # Load and process data (runs once due to caching)
-    # This will now use the updated resilient scraping logic
     df_programs = get_cmu_program_data()
     if df_programs.empty:
         st.warning("Program data could not be loaded. Cannot proceed with recommendations."); return
@@ -336,13 +332,12 @@ def main():
         
         # --- Embeddings & Matching ---
         
-        # We need to re-index only if the AI provider changes (forcing a rerun of the embedding function)
         embedding_key = f'embedding__{ai_provider}'
         if embedding_key not in st.session_state:
             with st.spinner(f"🧠 Indexing programs using {ai_provider}... (This runs once and is cached)"):
                 df_programs['embedding'] = df_programs.apply(lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
                 df_programs.dropna(subset=['embedding'], inplace=True)
-                st.session_state[embedding_key] = df_programs # Store the indexed DataFrame
+                st.session_state[embedding_key] = df_programs 
         
         df = st.session_state[embedding_key].copy()
         
@@ -370,7 +365,6 @@ def main():
                         
                         col1, col2 = st.columns([3, 1])
                         with col1: 
-                            # Display similarity as a progress bar
                             st.progress(program['similarity'], text=f"**Profile Match Score: {program['similarity']:.1%}**")
                         with col2: 
                             st.link_button("Go to Program Website ↗️", program['url'], use_container_width=True)
