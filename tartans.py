@@ -2,7 +2,7 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 12, 2025
-# Version: 2.2 (Implements a resilient, content-based scraper)
+# Version: 2.3 (Enhanced resilience and hybrid scoring)
 
 import streamlit as st
 import requests
@@ -24,9 +24,8 @@ st.set_page_config(
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes a PREDEFINED LIST of CMU Engineering pages.
-    NEW RESILIENT STRATEGY: Selects all links in the main content area and filters them
-    based on keywords, which is much more robust than relying on fragile HTML structure.
+    Scrapes a PREDEFINED LIST of CMU Engineering pages using multi-layered resilient selectors.
+    This ensures data is captured even if minor structural changes occur on individual program pages.
     """
     base_url = "https://engineering.cmu.edu"
     source_urls = [
@@ -45,31 +44,31 @@ def get_cmu_program_data():
     ]
     critical_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
     all_programs = {}
+    # Use a standard header to mimic a browser request
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     
     progress_bar = st.progress(0, text="Initializing live data fetch...")
     
+    # --- PHASE 1: COLLECT PROGRAM LINKS AND META DATA ---
     for i, page_url in enumerate(source_urls):
         progress_bar.progress((i + 1) / len(source_urls), text=f"Scanning page: {page_url.split('/')[-1]}")
         try:
             response = requests.get(page_url, headers=headers, timeout=20)
-            response.raise_for_status()
+            response.raise_for_status() # Will raise an exception for 4xx or 5xx status codes
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # --- RESILIENT SELECTOR ---
-            # 1. Target the main content container by its unique ID.
+            # --- RESILIENT SELECTOR (Anchor to main content) ---
             content_area = soup.find('div', id='content_a')
             if not content_area:
-                continue # Skip this page if the main content div isn't found
+                continue 
             
-            # 2. Find ALL links within that container.
             all_links = content_area.find_all('a', href=True)
 
             for link in all_links:
                 program_name = link.text.strip()
-                href = link['href']
+                href = link.get('href', '')
                 
-                # 3. Intelligently filter the links to find actual programs.
+                # Use a combined attribute filter for robustness [7]
                 is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name)
                 is_valid_path = href.startswith('/education/graduate-studies/programs/')
                 
@@ -86,18 +85,39 @@ def get_cmu_program_data():
             else: st.warning(f"Could not fetch or process page {page_url.split('/')[-1]}: {e}")
             continue
     
+    # --- PHASE 2: FETCH DETAILED DESCRIPTIONS (Resilient Traversal) ---
     programs_list = list(all_programs.values())
     total_programs = len(programs_list)
     for i, program in enumerate(programs_list):
         progress_bar.progress((i + 1) / total_programs, text=f"Fetching details for: {program['name']}")
         try:
             sub_response = requests.get(program['url'], headers=headers, timeout=15)
+            sub_response.raise_for_status()
             sub_soup = BeautifulSoup(sub_response.text, 'html.parser')
+            
+            description_tag = None
+            
+            # 1. Primary Selector (High accuracy, but fragile)
             description_tag = sub_soup.select_one('div.component-content p')
+
+            # 2. Resilient Fallback: Find the first paragraph element without a class attribute [3]
+            # This often captures the clean main description if the primary selector fails.
+            if not description_tag:
+                content_area = sub_soup.find('div', id='content_a')
+                if content_area:
+                    description_tag = content_area.find("p", attrs={"class": None})
+            
+            # 3. Final Fallback: Find the first non-empty paragraph in the document
+            if not description_tag:
+                for p_tag in sub_soup.find_all('p'):
+                    if p_tag.get_text(strip=True):
+                        description_tag = p_tag
+                        break
+
             program['description'] = description_tag.get_text(strip=True) if description_tag else 'No detailed description found.'
             time.sleep(0.1)
-        except requests.RequestException:
-            program['description'] = 'Could not retrieve description.'
+        except requests.RequestException as e:
+            program['description'] = f'Could not retrieve description. Connection Error: {type(e).__name__}'
             
     progress_bar.empty()
     if not programs_list:
@@ -115,16 +135,26 @@ def get_deepseek_embedding(text: str) -> np.ndarray:
     if not api_key: st.error("DeepSeek API Key is missing from secrets."); return None
     try:
         response = requests.post("https://api.deepseek.com/v1/embeddings", headers={"Authorization": f"Bearer {api_key}"}, json={"input": text, "model": "deepseek-embedding"}, timeout=20)
-        response.raise_for_status(); return np.array(response.json()['data'][0]['embedding'])
-    except Exception as e: st.error(f"DeepSeek Embedding API call failed: {e}"); return None
+        response.raise_for_status() 
+        return np.array(response.json()['data']['embedding'])
+    except requests.RequestException as e:
+        # Catch network/HTTP errors (e.g., timeout, 4xx/5xx status)
+        st.error(f"DeepSeek Embedding API call failed (Request Error): {e}"); return None
+    except Exception as e: 
+        st.error(f"DeepSeek Embedding API call failed (General Error): {e}"); return None
 
 @st.cache_data
 def get_gemini_embedding(text: str) -> np.ndarray:
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key: st.error("Gemini API Key is missing from secrets."); return None
     try:
-        genai.configure(api_key=api_key); result = genai.embed_content(model="models/embedding-001", content=text, task_type="RETRIEVAL_QUERY"); return np.array(result['embedding'])
-    except Exception as e: st.error(f"Gemini Embedding API call failed: {e}"); return None
+        # Using gemini-embedding-001 for state-of-the-art performance [8, 6]
+        genai.configure(api_key=api_key)
+        # Note: If memory/storage is an issue, output_dimensionality can be used here (MRL feature) [6]
+        result = genai.embed_content(model="models/gemini-embedding-001", content=text, task_type="RETRIEVAL_QUERY")
+        return np.array(result['embedding'])
+    except Exception as e: 
+        st.error(f"Gemini Embedding API call failed: {e}"); return None
 
 @st.cache_data
 def get_deepseek_analysis(program_name: str, program_description: str, student_profile: str) -> str:
@@ -141,9 +171,21 @@ def get_deepseek_analysis(program_name: str, program_description: str, student_p
     - **Key Application Skills:** Based on their profile, what specific skills should this student highlight in their application?
     - **Potential Career Trajectory:** How does this degree help them achieve their specific career ambitions?"""
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5, "max_tokens": 400}, timeout=25)
-        response.raise_for_status(); return response.json()['choices'][0]['message']['content']
-    except Exception as e: return f"AI analysis failed to generate: {e}"
+        response = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={
+            "model": "deepseek-chat", 
+            "messages": [{"role": "user", "content": prompt}], 
+            "temperature": 0.5, 
+            "max_tokens": 400
+        }, timeout=25)
+        # Check for bad status codes first
+        response.raise_for_status() 
+        return response.json()['choices']['message']['content']
+    except requests.RequestException as e:
+        # Handles connection issues, timeouts, and bad status codes. 
+        # DeepSeek documents that high traffic can lead to slow/empty responses.[4]
+        return f"AI analysis failed due to connection error (Potential server load issue). Error: {type(e).__name__}" 
+    except Exception as e: 
+        return f"AI analysis failed to generate: {e}"
 
 @st.cache_data
 def get_gemini_analysis(program_name: str, program_description: str, student_profile: str) -> str:
@@ -160,8 +202,13 @@ def get_gemini_analysis(program_name: str, program_description: str, student_pro
     - **Key Application Skills:** Based on their profile, what specific skills should this student highlight in their application?
     - **Potential Career Trajectory:** How does this degree help them achieve their specific career ambitions?"""
     try:
-        genai.configure(api_key=api_key); model = genai.GenerativeModel('gemini-1.5-pro-latest'); response = model.generate_content(prompt); return response.text
-    except Exception as e: return f"AI analysis failed to generate: {e}"
+        genai.configure(api_key=api_key)
+        # Using a reliable, high-capability model for reasoning and generation [9]
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e: 
+        return f"AI analysis failed to generate: {e}"
 
 # --- MAIN APPLICATION LOGIC ---
 def main():
@@ -171,11 +218,12 @@ def main():
     with st.sidebar:
         st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_container_width=True)
         st.header("AI Configuration")
-        available_providers = []
+        available_providers =
+        # Accessing secrets securely via st.secrets [10]
         if st.secrets.get("DEEPSEEK_API_KEY"): available_providers.append("DeepSeek")
         if st.secrets.get("GEMINI_API_KEY"): available_providers.append("Google Gemini")
-        if not available_providers: st.error("No AI provider API key found in app secrets."); st.stop()
-        ai_provider = st.selectbox("Choose AI Provider", available_providers) if len(available_providers) > 1 else available_providers[0]
+        if not available_providers: st.error("No AI provider API key found in app secrets. Please check the documentation."); st.stop()
+        ai_provider = st.selectbox("Choose AI Provider", available_providers) if len(available_providers) > 1 else available_providers
         st.info(f"Using **{ai_provider}** API for analysis.")
         st.markdown("---")
         st.info("This tool is a proof-of-concept and not an official admissions tool.")
@@ -190,7 +238,7 @@ def main():
     # --- Interactive Questionnaire ---
     st.subheader("Tell us about yourself:")
     
-    common_majors = ["Computer Science", "Electrical Engineering", "Mechanical Engineering", "Civil Engineering", "Chemical Engineering", "Biomedical Engineering", "Materials Science", "Physics", "Mathematics", "Other"]
+    common_majors =
     
     with st.form("student_profile_form"):
         col1, col2 = st.columns(2)
@@ -199,10 +247,10 @@ def main():
             background = st.multiselect("What is your academic background? (Select all that apply)", options=common_majors, default=["Mechanical Engineering"])
         with col2:
             career_goal = st.selectbox("What is your primary career ambition?", 
-                                       ("Industry Leadership (e.g., Tech, Manufacturing, Energy)", 
-                                        "Research & Academia (e.g., Professor, National Lab Scientist)",
-                                        "Startup & Entrepreneurship",
-                                        "Government & Public Policy"))
+                                        ("Industry Leadership (e.g., Tech, Manufacturing, Energy)", 
+                                         "Research & Academia (e.g., Professor, National Lab Scientist)",
+                                         "Startup & Entrepreneurship",
+                                         "Government & Public Policy"))
         
         learning_style = st.slider(
             "What's your preferred learning style?",
@@ -227,7 +275,7 @@ def main():
         
         synthesized_query = (
             f"I am a student with a background in {', '.join(background)} looking for a {degree_level} program. "
-            f"My primary career goal is {career_goal.split('(')[0].strip()}. "
+            f"My primary career goal is {career_goal.split('(').strip()}. "
             f"I am most interested in topics like {keywords}. "
             f"I thrive in {style_desc}."
         )
@@ -235,8 +283,10 @@ def main():
         with st.expander("Your Generated Profile for AI Matching"):
             st.write(synthesized_query)
         
-        if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
+        # Check if embeddings need re-indexing (e.g., provider change)
+        if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider')!= ai_provider:
             with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
+                # Generate embeddings for programs based on Name and Description
                 df_programs['embedding'] = df_programs.apply(lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
                 df_programs.dropna(subset=['embedding'], inplace=True)
                 st.session_state.program_data = df_programs; st.session_state.embeddings_generated = True; st.session_state.ai_provider = ai_provider
@@ -246,8 +296,16 @@ def main():
         with st.spinner(f"🔍 Analyzing your profile and finding the best matches with {ai_provider}..."):
             query_embedding = embedding_function(synthesized_query)
             if query_embedding is not None:
+                
+                # 1. Semantic Score (Cosine Similarity) [11]
+                # Measures the directional alignment of vectors, ignoring description length [12]
                 df['similarity'] = df['embedding'].apply(lambda x: np.dot(x, query_embedding) / (np.linalg.norm(x) * np.linalg.norm(query_embedding)))
+                
+                # 2. Categorical Feature Boost (Hybrid Ranking - F_match) [5]
+                # Adds a weighting boost for mandatory criteria (degree level match)
                 df['degree_match_boost'] = df.apply(lambda row: 0.1 if row['degree_type'] == degree_level else 0, axis=1)
+                
+                # 3. Final Hybrid Score (Weighted Aggregate) [5]
                 df['final_score'] = df['similarity'] + df['degree_match_boost']
                 
                 results = df.sort_values('final_score', ascending=False).head(3)
@@ -258,8 +316,9 @@ def main():
                 else:
                     for i, (_, program) in enumerate(results.iterrows()):
                         st.markdown("---"); st.markdown(f"### **{i+1}. {program['name']}**")
-                        col1, col2 = st.columns([3, 1])
-                        with col1: st.progress(program['similarity'], text=f"**Profile Match Score: {program['similarity']:.0%}**")
+                        col1, col2 = st.columns([1, 2])
+                        # Displaying only the similarity portion of the score for user clarity
+                        with col1: st.progress(program['similarity'], text=f"**Semantic Match Score: {program['similarity']:.0%}**")
                         with col2: st.link_button("Go to Program Website ↗️", program['url'], use_container_width=True)
                         with st.expander("**Program Overview from CMU Website**"): st.write(program['description'])
                         with st.spinner("🤖 Generating personalized AI Advisor analysis..."):
