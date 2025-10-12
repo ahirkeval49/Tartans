@@ -40,22 +40,7 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
-    ]
-    # --- NEW: List of all URLs to scrape ---
-    source_urls = [
-        "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cee.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ece.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/epp.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ini.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/iii.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/mse.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
-    ]
+ 
     
     all_programs = {} # Use a dictionary to automatically handle duplicates by URL
     
