@@ -2,7 +2,7 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 12, 2025
-# Version: 1.6 (Fixes IndentationError and logical bugs from copy-paste)
+# Version: 2.0 (Interactive Questionnaire for Personalized Recommendations)
 
 import streamlit as st
 import requests
@@ -16,7 +16,7 @@ import google.generativeai as genai
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="CMU Engineering Program Navigator",
-    page_icon="🔧",
+    page_icon="🎓",
     layout="wide"
 )
 
@@ -24,13 +24,10 @@ st.set_page_config(
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes a PREDEFINED LIST of CMU Engineering pages to find all graduate programs.
-    Treats the main index page as a "critical" source for error reporting.
+    Scrapes a PREDEFINED LIST of CMU Engineering pages.
+    NEW: Also parses the degree type (M.S. or Ph.D.) from the program name.
     """
-    # Define the base URL for resolving relative links
     base_url = "https://engineering.cmu.edu"
-    
-    # Define the list of all pages to scrape
     source_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
@@ -45,45 +42,35 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
     ]
-    
-    # Define the single most important URL as critical
     critical_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
+    all_programs = {}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     
-    all_programs = {} # Use a dictionary to automatically handle duplicates by URL
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
-    progress_bar = st.progress(0, text="Initializing live data fetch from multiple CMU pages...")
+    progress_bar = st.progress(0, text="Initializing live data fetch...")
 
-    # Loop through the list of source_urls
     for i, page_url in enumerate(source_urls):
         progress_bar.progress((i + 1) / len(source_urls), text=f"Scanning page: {page_url.split('/')[-1]}")
         try:
             response = requests.get(page_url, headers=headers, timeout=20)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
-            
             program_elements = soup.select('div.component-content h4 a')
-            
             for link in program_elements:
                 program_name = link.text.strip()
-                # Use the string base_url to correctly join the URL parts
                 program_url = urljoin(base_url, link['href'])
                 
-                if "department" in program_name.lower() or program_url == f"{base_url}/":
-                    continue
+                if "department" in program_name.lower() or program_url == f"{base_url}/": continue
+                
+                # --- NEW: Parse degree type ---
+                degree_type = 'Other'
+                if 'M.S.' in program_name or 'Master' in program_name: degree_type = 'M.S.'
+                elif 'Ph.D.' in program_name: degree_type = 'Ph.D.'
                 
                 if program_url not in all_programs:
-                     all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': ''}
-
+                    all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
         except requests.RequestException as e:
-            # Check if the failed URL is the critical one
-            if page_url == critical_url:
-                st.error(f"Critical source failed: Could not fetch main program page. Results may be incomplete. Error: {e}")
-            else:
-                st.warning(f"Could not fetch or process page {page_url.split('/')[-1]}: {e}")
+            if page_url == critical_url: st.error(f"Critical source failed: Could not fetch main program page. Error: {e}")
+            else: st.warning(f"Could not fetch or process page {page_url.split('/')[-1]}: {e}")
             continue
     
     programs_list = list(all_programs.values())
@@ -107,7 +94,7 @@ def get_cmu_program_data():
     st.success(f"Successfully scraped and processed {len(programs_list)} unique graduate programs.")
     return pd.DataFrame(programs_list)
 
-# --- AI PROVIDER FUNCTIONS (using st.secrets for keys) ---
+# --- AI PROVIDER FUNCTIONS (Unchanged) ---
 
 @st.cache_data
 def get_deepseek_embedding(text: str) -> np.ndarray:
@@ -127,56 +114,56 @@ def get_gemini_embedding(text: str) -> np.ndarray:
     except Exception as e: st.error(f"Gemini Embedding API call failed: {e}"); return None
 
 @st.cache_data
-def get_deepseek_analysis(program_name: str, program_description: str, query: str) -> str:
+def get_deepseek_analysis(program_name: str, program_description: str, student_profile: str) -> str:
     api_key = st.secrets.get("DEEPSEEK_API_KEY")
     if not api_key: return "AI analysis unavailable: DeepSeek API key missing."
-    prompt = f"""As an expert academic advisor for Carnegie Mellon's College of Engineering, analyze the following graduate program for a prospective student interested in '{query}'.
-    **Program:** {program_name} | **Description:** {program_description}
-    Provide a concise, 3-point analysis in markdown format:
-    - **Program Fit:** Explain why this program matches the student's interest in '{query}'.
-    - **Key Application Skills:** What skills (e.g., Python, MATLAB, lab research) should the student highlight?
-    - **Potential Career Trajectory:** Mention one or two specific job titles or industries."""
+    prompt = f"""As an expert CMU academic advisor, analyze this program for a student with the following profile:
+    **Student Profile:** '{student_profile}'
+    
+    **Program to Analyze:** {program_name}
+    **Description:** {program_description}
+
+    Provide a concise, 3-point analysis in markdown format, tailored to the student's profile:
+    - **Program Fit:** How well does this program align with the student's stated background and goals?
+    - **Key Application Skills:** Based on their profile, what specific skills should this student highlight in their application?
+    - **Potential Career Trajectory:** How does this degree help them achieve their specific career ambitions?"""
     try:
         response = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5, "max_tokens": 400}, timeout=25)
         response.raise_for_status(); return response.json()['choices'][0]['message']['content']
     except Exception as e: return f"AI analysis failed to generate: {e}"
 
 @st.cache_data
-def get_gemini_analysis(program_name: str, program_description: str, query: str) -> str:
+def get_gemini_analysis(program_name: str, program_description: str, student_profile: str) -> str:
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key: return "AI analysis unavailable: Gemini API key missing."
-    prompt = f"""As an expert academic advisor for Carnegie Mellon's College of Engineering, analyze the following graduate program for a prospective student interested in '{query}'.
-    **Program:** {program_name} | **Description:** {program_description}
-    Provide a concise, 3-point analysis in markdown format:
-    - **Program Fit:** Explain why this program matches the student's interest in '{query}'.
-    - **Key Application Skills:** What skills (e.g., Python, MATLAB, lab research) should the student highlight?
-    - **Potential Career Trajectory:** Mention one or two specific job titles or industries."""
+    prompt = f"""As an expert CMU academic advisor, analyze this program for a student with the following profile:
+    **Student Profile:** '{student_profile}'
+    
+    **Program to Analyze:** {program_name}
+    **Description:** {program_description}
+
+    Provide a concise, 3-point analysis in markdown format, tailored to the student's profile:
+    - **Program Fit:** How well does this program align with the student's stated background and goals?
+    - **Key Application Skills:** Based on their profile, what specific skills should this student highlight in their application?
+    - **Potential Career Trajectory:** How does this degree help them achieve their specific career ambitions?"""
     try:
         genai.configure(api_key=api_key); model = genai.GenerativeModel('gemini-1.5-pro-latest'); response = model.generate_content(prompt); return response.text
     except Exception as e: return f"AI analysis failed to generate: {e}"
 
 # --- MAIN APPLICATION LOGIC ---
 def main():
-    st.title("🔧 CMU College of Engineering Program Navigator")
-    st.markdown("Discover your ideal graduate program at Carnegie Mellon. Enter your interests below to get AI-powered recommendations based on live program data from the official CMU website.")
+    st.title("🎓 CMU Engineering Program Navigator")
+    st.markdown("Answer a few questions to discover the graduate program that best fits your academic and career goals.")
 
     with st.sidebar:
         st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_container_width=True)
         st.header("AI Configuration")
-        
         available_providers = []
         if st.secrets.get("DEEPSEEK_API_KEY"): available_providers.append("DeepSeek")
         if st.secrets.get("GEMINI_API_KEY"): available_providers.append("Google Gemini")
-
-        if not available_providers:
-            st.error("No AI provider API key found in app secrets. The app administrator must add a key to enable AI features."); st.stop()
-
-        if len(available_providers) > 1:
-            ai_provider = st.selectbox("Choose AI Provider", available_providers, help="Select the AI model to power the recommendations.")
-        else:
-            ai_provider = available_providers[0]
-            st.info(f"Using **{ai_provider}** API for analysis.")
-        
+        if not available_providers: st.error("No AI provider API key found in app secrets."); st.stop()
+        ai_provider = st.selectbox("Choose AI Provider", available_providers) if len(available_providers) > 1 else available_providers[0]
+        st.info(f"Using **{ai_provider}** API for analysis.")
         st.markdown("---")
         st.info("This tool is a proof-of-concept and not an official admissions tool.")
 
@@ -187,41 +174,90 @@ def main():
     if df_programs.empty:
         st.warning("Program data could not be loaded. Please try again later."); return
 
-    if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
-        with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
-            combined_text = df_programs.apply(lambda row: f"Program: {row['name']}\nDescription: {row['description']}", axis=1)
-            df_programs['embedding'] = combined_text.apply(embedding_function)
-            df_programs.dropna(subset=['embedding'], inplace=True)
-            st.session_state.program_data = df_programs; st.session_state.embeddings_generated = True; st.session_state.ai_provider = ai_provider
+    # --- NEW: Interactive Questionnaire ---
+    st.subheader("Tell us about yourself:")
     
-    df = st.session_state.program_data
+    common_majors = ["Computer Science", "Electrical Engineering", "Mechanical Engineering", "Civil Engineering", "Chemical Engineering", "Biomedical Engineering", "Materials Science", "Physics", "Mathematics", "Other"]
     
-    search_query = st.text_input("**What are your academic and career interests?**", placeholder="e.g., 'robotics and automation', 'biomedical device design', 'machine learning for energy'")
+    with st.form("student_profile_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            degree_level = st.radio("What degree level are you pursuing?", ("M.S.", "Ph.D."), horizontal=True)
+            background = st.multiselect("What is your academic background? (Select all that apply)", options=common_majors, default=["Mechanical Engineering"])
+        with col2:
+            career_goal = st.selectbox("What is your primary career ambition?", 
+                                       ("Industry Leadership (e.g., Tech, Manufacturing, Energy)", 
+                                        "Research & Academia (e.g., Professor, National Lab Scientist)",
+                                        "Startup & Entrepreneurship",
+                                        "Government & Public Policy"))
+        
+        learning_style = st.slider(
+            "What's your preferred learning style?",
+            0, 100, 50,
+            help="0 = Purely Theoretical/Research, 100 = Highly Applied/Project-Based"
+        )
+        
+        keywords = st.text_area(
+            "List specific keywords, topics, or technologies that interest you.",
+            placeholder="e.g., machine learning, robotics, sustainable energy, quantum computing, battery technology, medical devices..."
+        )
+        
+        submitted = st.form_submit_button("🎓 Find My Program", use_container_width=True)
 
-    if search_query:
-        with st.spinner(f"🔍 Analyzing your interests and finding the best matches with {ai_provider}..."):
-            query_embedding = embedding_function(search_query)
-            
+    if submitted:
+        # --- NEW: Synthesize a rich query from the user's answers ---
+        style_desc = ""
+        if learning_style < 20: style_desc = "a heavily theoretical and research-focused program"
+        elif learning_style < 40: style_desc = "a program with a strong theoretical basis"
+        elif learning_style < 60: style_desc = "a balanced program with both theory and hands-on projects"
+        elif learning_style < 80: style_desc = "a project-driven program with a solid theoretical foundation"
+        else: style_desc = "a highly applied, hands-on, and project-based program"
+        
+        synthesized_query = (
+            f"I am a student with a background in {', '.join(background)} looking for a {degree_level} program. "
+            f"My primary career goal is {career_goal.split('(')[0].strip()}. "
+            f"I am most interested in topics like {keywords}. "
+            f"I thrive in {style_desc}."
+        )
+
+        with st.expander("Your Generated Profile for AI Matching"):
+            st.write(synthesized_query)
+        
+        # --- Generate embeddings and find matches ---
+        if 'embeddings_generated' not in st.session_state or st.session_state.get('ai_provider') != ai_provider:
+            with st.spinner(f"🧠 Indexing programs using {ai_provider}..."):
+                df_programs['embedding'] = df_programs.apply(lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
+                df_programs.dropna(subset=['embedding'], inplace=True)
+                st.session_state.program_data = df_programs; st.session_state.embeddings_generated = True; st.session_state.ai_provider = ai_provider
+        
+        df = st.session_state.program_data
+        
+        with st.spinner(f"🔍 Analyzing your profile and finding the best matches with {ai_provider}..."):
+            query_embedding = embedding_function(synthesized_query)
             if query_embedding is not None:
                 df['similarity'] = df['embedding'].apply(lambda x: np.dot(x, query_embedding) / (np.linalg.norm(x) * np.linalg.norm(query_embedding)))
-                results = df.sort_values('similarity', ascending=False).head(3)
-
-                st.subheader(f"Top 3 Program Matches for '{search_query}'")
                 
+                # --- NEW: Prioritize results that match the desired degree level ---
+                df['degree_match_boost'] = df.apply(lambda row: 0.1 if row['degree_type'] == degree_level else 0, axis=1)
+                df['final_score'] = df['similarity'] + df['degree_match_boost']
+                
+                results = df.sort_values('final_score', ascending=False).head(3)
+
+                st.subheader(f"Top 3 Program Recommendations")
                 if results.empty:
-                    st.warning("No strong matches found. Try rephrasing your interests for a better result.")
+                    st.warning("No strong matches found. Try adjusting your criteria.")
                 else:
                     for i, (_, program) in enumerate(results.iterrows()):
                         st.markdown("---"); st.markdown(f"### **{i+1}. {program['name']}**")
                         col1, col2 = st.columns([3, 1])
-                        with col1: st.progress(program['similarity'], text=f"**Match Score: {program['similarity']:.0%}**")
+                        with col1: st.progress(program['similarity'], text=f"**Profile Match Score: {program['similarity']:.0%}**")
                         with col2: st.link_button("Go to Program Website ↗️", program['url'], use_container_width=True)
                         with st.expander("**Program Overview from CMU Website**"): st.write(program['description'])
-                        with st.spinner("🤖 Generating AI Advisor analysis..."):
-                            analysis = analysis_function(program['name'], program['description'], search_query)
+                        with st.spinner("🤖 Generating personalized AI Advisor analysis..."):
+                            analysis = analysis_function(program['name'], program['description'], synthesized_query)
                         st.markdown("**AI-Powered Advisor Analysis**"); st.info(analysis)
             else:
-                st.error("Could not process your query. The AI embedding could not be generated.")
+                st.error("Could not process your query.")
 
 if __name__ == "__main__":
     main()
