@@ -1,8 +1,7 @@
 # tartans.py
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
-# Date: October 13, 2025 (Updated for Maximum Scraping Resilience)
-# Version: 2.5 (Aggressive Selector Strategy)
+# Date: October 13, 2025 (Updated for Maximum Scraping Resilience - Version 3.0)
 
 import streamlit as st
 import requests
@@ -37,41 +36,43 @@ def robust_request(url: str, headers: Dict[str, str], timeout: int = 15) -> Opti
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """
-    Scrapes a list of CMU Engineering pages using an aggressive, content-keyword-based strategy 
-    that ignores specific structural classes where possible.
+    Scrapes a list of CMU Engineering pages by treating each department URL 
+    as a program source and inferring M.S. and Ph.D. programs from it.
+    This avoids unreliable link-finding.
     """
     base_url = "https://engineering.cmu.edu"
-    # These URLs are the correct entry points for Graduate Studies at CMU Engineering
-    source_urls = [
-        "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cee.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ece.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/epp.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ini.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/iii.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/mse.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
+    
+    # These URLs are the department-level program pages we must scrape for content.
+    department_urls = [
+        "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html", # Biomedical Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html", # Chemical Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cee.html", # Civil & Environmental Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ece.html", # Electrical & Computer Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/epp.html", # Engineering & Public Policy
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ini.html", # Information Networking Institute
+        "https://engineering.cmu.edu/education/graduate-studies/programs/iii.html", # Integrated Innovation Institute
+        "https://engineering.cmu.edu/education/graduate-studies/programs/mse.html", # Materials Science & Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html", # Mechanical Engineering
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html", # CMU Africa
+        "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html" # Silicon Valley
     ]
     
-    all_programs = {}
+    programs_list = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     
     st.subheader("Data Fetch Status (Cached)")
     status_expander = st.expander("Show Data Scraping Log", expanded=False)
 
     with status_expander:
-        progress_bar = st.progress(0, text="Starting live data fetch...")
+        progress_bar = st.progress(0, text="Starting direct program content fetch...")
         
-        # --- PHASE 1: COLLECT PROGRAM LINKS (Aggressive Search) ---
+        # --- PHASE 1: DIRECTLY FETCH CONTENT FROM DEPARTMENT PAGES ---
         st.markdown("---")
-        st.caption("Phase 1: Collecting Program Links from Index Pages (Broad Search)")
-        for i, page_url in enumerate(source_urls):
+        st.caption("Phase 1: Fetching content directly from departmental program pages.")
+        
+        for i, page_url in enumerate(department_urls):
             page_name = page_url.split('/')[-1]
-            progress_bar.progress((i + 1) / len(source_urls) / 2, text=f"Scanning link sources: {page_name}")
+            progress_bar.progress((i + 1) / len(department_urls), text=f"Processing department page: {page_name}")
             
             html_content = robust_request(page_url, headers)
             if not html_content:
@@ -80,75 +81,56 @@ def get_cmu_program_data():
             
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # AGGRESSIVE SEARCH: Find ALL links in the body
-            all_links = soup.body.find_all('a', href=True) if soup.body else []
+            # 1. EXTRACT PROGRAM NAME (More robust: look for H1, then H2, then fallback to title)
+            program_name_base = "CMU Program"
+            if soup.find('h1'):
+                program_name_base = soup.find('h1').get_text(strip=True).replace("Graduate", "").strip()
+            elif soup.find('title'):
+                program_name_base = soup.find('title').get_text(strip=True).split('|')[0].strip()
+                
+            # 2. AGGRESSIVE DESCRIPTION EXTRACTION
+            description_text = 'No sufficiently detailed description found on page.'
+            description_paragraphs = soup.body.find_all('p', limit=10) if soup.body else []
+            # Only use paragraphs longer than 50 characters to avoid footers/nav links
+            text_parts = [p.get_text(strip=True) for p in description_paragraphs if len(p.get_text(strip=True)) > 50]
             
-            if not all_links:
-                st.warning(f"No links found in the body of {page_name}.")
-
-            links_found_on_page = 0
-            for link in all_links:
-                program_name = link.text.strip()
-                href = link.get('href', '').strip()
-                
-                # Check for graduate program keywords
-                is_program_link = ('M.S.' in program_name or 'Ph.D.' in program_name or 'Master' in program_name or 'Doctor' in program_name)
-                # Ensure the link is not a hash, a general image link, or too short
-                is_valid_path = ('/education/graduate-studies/' in href or '/departments/' in href) and len(program_name) > 10 and not href.startswith('#')
-                
-                if is_program_link and is_valid_path: 
-                    program_url = urljoin(base_url, href)
-                    
-                    degree_type = 'Other'
-                    if 'M.S.' in program_name or 'Master' in program_name: degree_type = 'M.S.'
-                    elif 'Ph.D.' in program_name or 'Doctor' in program_name: degree_type = 'Ph.D.'
-                    
-                    if program_url not in all_programs:
-                        all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': '', 'degree_type': degree_type}
-                        links_found_on_page += 1
+            if text_parts:
+                description_text = ' '.join(text_parts)
+                # Limit and clean up the description
+                description_text = description_text[:700].rstrip() + '...' if len(description_text) > 700 else description_text
             
-            if links_found_on_page == 0:
-                st.info(f"0 program links identified on {page_name}. (Links must contain M.S./Ph.D. keywords.)")
-                
+            # 3. CREATE TWO PROGRAM ENTRIES (M.S. and Ph.D.) for the matching algorithm
+            
+            # M.S. Program Entry
+            ms_name = f"Master of Science ({program_name_base})"
+            programs_list.append({
+                'name': ms_name, 
+                'url': page_url, 
+                'description': description_text, 
+                'degree_type': 'M.S.'
+            })
+            
+            # Ph.D. Program Entry
+            phd_name = f"Doctor of Philosophy ({program_name_base})"
+            programs_list.append({
+                'name': phd_name, 
+                'url': page_url, 
+                'description': description_text, 
+                'degree_type': 'Ph.D.'
+            })
+            
+            st.info(f"Successfully indexed two programs from: {page_name} (M.S. and Ph.D. in {program_name_base})")
+            
             time.sleep(0.1) # Be polite to the server
 
-        # --- PHASE 2: FETCH DESCRIPTIONS ---
-        programs_list = list(all_programs.values())
-        total_programs = len(programs_list)
-        st.caption(f"Phase 2: Fetching details for {total_programs} unique programs.")
-        
-        for i, program in enumerate(programs_list):
-            progress_bar.progress(0.5 + (i + 1) / total_programs / 2, text=f"Fetching details for: {program['name']}")
-            
-            sub_html = robust_request(program['url'], headers, timeout=10)
-            if sub_html:
-                sub_soup = BeautifulSoup(sub_html, 'html.parser')
-                
-                # AGGRESSIVE DESCRIPTION EXTRACTION: Look for first few long paragraphs anywhere on the page
-                description_text = 'No sufficiently detailed description found on page.'
-                
-                # Search across all paragraphs in the body
-                description_paragraphs = sub_soup.body.find_all('p', limit=6) if sub_soup.body else []
-                text_parts = [p.get_text(strip=True) for p in description_paragraphs if len(p.get_text(strip=True)) > 50]
-                
-                if text_parts:
-                    description_text = ' '.join(text_parts)
-                    # Limit and clean up the description
-                    program['description'] = description_text[:700].rstrip() + '...' if len(description_text) > 700 else description_text
-                else:
-                    program['description'] = 'No sufficiently detailed description found on page.'
-
-            else:
-                program['description'] = 'Could not retrieve program details.'
-            time.sleep(0.1) # Be polite to the server
-            
+        # --- FINALIZATION ---
         progress_bar.empty()
         
     if not programs_list:
         st.error("Scraping finished, but no program data was collected. Please check the source URLs or website structure.")
         return pd.DataFrame()
         
-    st.success(f"Successfully scraped and indexed {len(programs_list)} unique graduate programs.")
+    st.success(f"Successfully scraped and indexed {len(programs_list)} distinct graduate program variants.")
     return pd.DataFrame(programs_list)
 
 # --- AI PROVIDER FUNCTIONS (No change needed here, keeping for completeness) ---
@@ -351,10 +333,14 @@ def main():
                 )
                 
                 # Boost score for degree type match
-                df['degree_match_boost'] = df.apply(lambda row: 0.1 if row['degree_type'] == degree_level else 0, axis=1)
-                df['final_score'] = df['similarity'] + df['degree_match_boost']
+                # Only keep programs that match the selected degree level
+                df_filtered = df[df['degree_type'] == degree_level].copy()
                 
-                results = df.sort_values('final_score', ascending=False).head(3)
+                if df_filtered.empty:
+                    st.warning(f"No programs matching the required '{degree_level}' degree level were found in the index.")
+                    return
+                
+                results = df_filtered.sort_values('similarity', ascending=False).head(3)
 
                 st.subheader(f"Top 3 Program Recommendations for a {degree_level} Applicant")
                 if results.empty:
