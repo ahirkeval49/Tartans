@@ -1,8 +1,8 @@
 # tartans.py
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
-# Date: October 11, 2025
-# Version: 1.4 (Multi-URL scraping for resilience and comprehensiveness)
+# Date: October 12, 2025
+# Version: 1.5 (Implements critical URL logic and fixes bugs)
 
 import streamlit as st
 import requests
@@ -25,9 +25,11 @@ st.set_page_config(
 def get_cmu_program_data():
     """
     Scrapes a PREDEFINED LIST of CMU Engineering pages to find all graduate programs.
-    This approach is more resilient to website structure changes than a single entry point.
+    Treats the main index page as a "critical" source for error reporting.
     """
-    base_url  = [
+    # --- BUG FIX: Renamed variable to source_urls and defined a separate base_url string ---
+    base_url = "https://engineering.cmu.edu" 
+    source_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
@@ -42,6 +44,9 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
     ]
     
+    # --- NEW: Define the most important URL as critical ---
+    critical_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
+    
     all_programs = {} # Use a dictionary to automatically handle duplicates by URL
     
     headers = {
@@ -50,6 +55,7 @@ def get_cmu_program_data():
     
     progress_bar = st.progress(0, text="Initializing live data fetch from multiple CMU pages...")
 
+    # --- BUG FIX: The loop variable must match the list name 'source_urls' ---
     for i, page_url in enumerate(source_urls):
         progress_bar.progress((i + 1) / len(source_urls), text=f"Scanning page: {page_url.split('/')[-1]}")
         try:
@@ -61,21 +67,23 @@ def get_cmu_program_data():
             
             for link in program_elements:
                 program_name = link.text.strip()
+                # --- BUG FIX: urljoin needs the base_url string, not the list ---
                 program_url = urljoin(base_url, link['href'])
                 
-                # Filter out non-program links
-                if "department" in program_name.lower() or program_url == base_url:
+                if "department" in program_name.lower() or program_url == f"{base_url}/":
                     continue
                 
-                # Use URL as key to prevent duplicates
                 if program_url not in all_programs:
                      all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': ''}
 
         except requests.RequestException as e:
-            st.warning(f"Could not fetch or process page {page_url}: {e}")
+            # --- NEW: Check if the failed URL is the critical one ---
+            if page_url == critical_url:
+                st.error(f"Critical source failed: Could not fetch main program page. Results may be incomplete. Error: {e}")
+            else:
+                st.warning(f"Could not fetch or process page {page_url.split('/')[-1]}: {e}")
             continue
     
-    # --- Now fetch descriptions for the unique programs found ---
     programs_list = list(all_programs.values())
     total_programs = len(programs_list)
     for i, program in enumerate(programs_list):
@@ -91,7 +99,7 @@ def get_cmu_program_data():
             
     progress_bar.empty()
     if not programs_list:
-        st.error("Scraping finished, but no program data was collected. The website structure may have changed on all pages.")
+        st.error("Scraping finished, but no program data was collected. All sources may be down or the website structure has changed.")
         return pd.DataFrame()
         
     st.success(f"Successfully scraped and processed {len(programs_list)} unique graduate programs.")
