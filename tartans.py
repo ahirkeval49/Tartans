@@ -2,7 +2,7 @@
 # CMU College of Engineering Program Navigator
 # Author: Gemini (Google AI)
 # Date: October 12, 2025
-# Version: 1.5 (Implements critical URL logic and fixes bugs)
+# Version: 1.6 (Fixes IndentationError and logical bugs from copy-paste)
 
 import streamlit as st
 import requests
@@ -27,8 +27,11 @@ def get_cmu_program_data():
     Scrapes a PREDEFINED LIST of CMU Engineering pages to find all graduate programs.
     Treats the main index page as a "critical" source for error reporting.
     """
-    # --- BUG FIX: Renamed variable to source_urls and defined a separate base_url string ---
-   critical_urls = [
+    # Define the base URL for resolving relative links
+    base_url = "https://engineering.cmu.edu"
+    
+    # Define the list of all pages to scrape
+    source_urls = [
         "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
@@ -41,8 +44,10 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
-   ]
-
+    ]
+    
+    # Define the single most important URL as critical
+    critical_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
     
     all_programs = {} # Use a dictionary to automatically handle duplicates by URL
     
@@ -52,7 +57,7 @@ def get_cmu_program_data():
     
     progress_bar = st.progress(0, text="Initializing live data fetch from multiple CMU pages...")
 
-    # --- BUG FIX: The loop variable must match the list name 'source_urls' ---
+    # Loop through the list of source_urls
     for i, page_url in enumerate(source_urls):
         progress_bar.progress((i + 1) / len(source_urls), text=f"Scanning page: {page_url.split('/')[-1]}")
         try:
@@ -64,7 +69,7 @@ def get_cmu_program_data():
             
             for link in program_elements:
                 program_name = link.text.strip()
-                # --- BUG FIX: urljoin needs the base_url string, not the list ---
+                # Use the string base_url to correctly join the URL parts
                 program_url = urljoin(base_url, link['href'])
                 
                 if "department" in program_name.lower() or program_url == f"{base_url}/":
@@ -74,7 +79,7 @@ def get_cmu_program_data():
                      all_programs[program_url] = {'name': program_name, 'url': program_url, 'description': ''}
 
         except requests.RequestException as e:
-            # --- NEW: Check if the failed URL is the critical one ---
+            # Check if the failed URL is the critical one
             if page_url == critical_url:
                 st.error(f"Critical source failed: Could not fetch main program page. Results may be incomplete. Error: {e}")
             else:
