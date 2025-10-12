@@ -30,18 +30,18 @@ def get_cmu_program_data():
     """
     base_url = "https://engineering.cmu.edu"
     source_urls = [
-        "https://engineering.cmu.edu/education/graduate-studies/programs/index",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/bme",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cee",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ece",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/epp",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/ini",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/iii",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/mse",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/meche",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa",
-        "https://engineering.cmu.edu/education/graduate-studies/programs/sv"
+        "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cheme.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cee.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ece.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/epp.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ini.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/iii.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/mse.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
+        "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
     ]
     critical_url = "https://engineering.cmu.edu/education/graduate-studies/programs/index.html"
     all_programs = {}
