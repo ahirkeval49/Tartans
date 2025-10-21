@@ -213,7 +213,7 @@ def get_deepseek_rag_analysis(api_key: str, prompt: str) -> str:
     if not api_key: return "AI analysis unavailable: DeepSeek API key missing."
 
     payload = {
-        "model": "deepseek-chat",
+        "model": "deepseek-reasoner",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3, # Lower temp for more factual, context-based answers
         "max_tokens": 1500, # Allow longer analysis
