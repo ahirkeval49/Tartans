@@ -40,7 +40,7 @@ def get_cmu_program_data():
     as a program source and inferring M.S. and Ph.D. programs from it.
     This avoids unreliable link-finding.
     """
-    base_url = "https://engineering.cmu.edu"
+    base_url = "https.engineering.cmu.edu"
     
     # These URLs are the department-level program pages we must scrape for content.
     department_urls = [
@@ -243,7 +243,8 @@ def main():
 
     # --- Sidebar Configuration ---
     with st.sidebar:
-        st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", use_container_width=True)
+        # FIX 1: Replaced use_container_width=True with width='stretch'
+        st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", width='stretch')
         st.header("AI Configuration")
         
         available_providers = []
@@ -298,7 +299,8 @@ def main():
             placeholder="e.g., machine learning, robotics, sustainable energy, quantum computing, battery technology, medical devices..."
         )
         
-        submitted = st.form_submit_button("🎓 Find My Program", use_container_width=True)
+        # FIX 2: Replaced use_container_width=True with width='stretch'
+        submitted = st.form_submit_button("🎓 Find My Program", width='stretch')
 
     if submitted:
         # --- Synthesize User Query ---
@@ -366,7 +368,8 @@ def main():
                         with col1: 
                             st.progress(program['similarity'], text=f"**Profile Match Score: {program['similarity']:.1%}**")
                         with col2: 
-                            st.link_button("Go to Program Website ↗️", program['url'], use_container_width=True)
+                            # FIX 3: Replaced use_container_width=True with width='stretch'
+                            st.link_button("Go to Program Website ↗️", program['url'], width='stretch')
                         
                         with st.expander("**Program Overview from CMU Website**"): 
                             st.write(program['description'])
