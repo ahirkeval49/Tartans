@@ -156,10 +156,11 @@ def _call_embedding_api(api_key: str, endpoint: str, payload: Dict[str, Any], mo
 @st.cache_data
 def get_deepseek_embedding(text: str) -> Optional[np.ndarray]:
     api_key = st.secrets.get("DEEPSEEK_API_KEY")
-    if not api_key: return None
-    # FIX: Correcting the payload:
-    # 1. The 'input' must be a list of strings (even if it's just one).
-    # 2. The 'model' name must be the correct identifier for the DeepSeek embedding model.
+    if not api_key: 
+        st.error("DeepSeek API key not found in secrets.")
+        return None
+        
+    # FIX: The 'model' name is corrected to 'deepseek-embed'
     payload = {"input": [text], "model": "deepseek-embed"} 
     endpoint = "https://api.deepseek.com/v1/embeddings"
     return _call_embedding_api(api_key, endpoint, payload, "DeepSeek")
@@ -167,7 +168,9 @@ def get_deepseek_embedding(text: str) -> Optional[np.ndarray]:
 @st.cache_data
 def get_gemini_embedding(text: str) -> Optional[np.ndarray]:
     api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key: return None
+    if not api_key: 
+        st.error("Gemini API key not found in secrets.")
+        return None
     try:
         genai.configure(api_key=api_key)
         result = genai.embed_content(model="models/embedding-001", content=text, task_type="RETRIEVAL_QUERY")
@@ -321,9 +324,16 @@ def main():
         embedding_key = f'embedding__{ai_provider}'
         if embedding_key not in st.session_state:
             with st.spinner(f"🧠 Indexing programs using {ai_provider}... (This runs once and is cached)"):
-                df_programs['embedding'] = df_programs.apply(lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
-                df_programs.dropna(subset=['embedding'], inplace=True)
-                st.session_state[embedding_key] = df_programs 
+                # Create a copy to avoid modifying the cached original df_programs
+                df_programs_embedded = df_programs.copy()
+                df_programs_embedded['embedding'] = df_programs_embedded.apply(lambda row: embedding_function(f"Program: {row['name']}\nDescription: {row['description']}"), axis=1)
+                df_programs_embedded.dropna(subset=['embedding'], inplace=True)
+                
+                if df_programs_embedded.empty:
+                    st.error(f"Failed to generate embeddings for all programs using {ai_provider}. Please check API key and service status.")
+                    st.stop()
+                
+                st.session_state[embedding_key] = df_programs_embedded
         
         df = st.session_state[embedding_key].copy()
         
@@ -336,7 +346,6 @@ def main():
                     lambda x: np.dot(x, query_embedding) / (np.linalg.norm(x) * np.linalg.norm(query_embedding))
                 )
                 
-                # Boost score for degree type match
                 # Only keep programs that match the selected degree level
                 df_filtered = df[df['degree_type'] == degree_level].copy()
                 
@@ -368,7 +377,12 @@ def main():
                         st.markdown("**AI-Powered Advisor Analysis**"); 
                         st.info(analysis)
             else:
+                # This error is triggered if query_embedding is None OR df is empty
                 st.error("Could not process your query or the program data index is empty.")
+                if query_embedding is None:
+                    st.warning("Failed to generate an embedding for your profile. Please check the AI provider status.")
+                if df.empty:
+                    st.warning("The program index is empty, likely due to embedding failures during indexing.")
 
 if __name__ == "__main__":
     main()
