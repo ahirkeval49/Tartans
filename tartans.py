@@ -160,7 +160,7 @@ def get_deepseek_embedding(text: str) -> Optional[np.ndarray]:
     # FIX: Correcting the payload:
     # 1. The 'input' must be a list of strings (even if it's just one).
     # 2. The 'model' name must be the correct identifier for the DeepSeek embedding model.
-    payload = {"input": [text], "model": "deepseek-ai/deepseek-text"} 
+    payload = {"input": [text], "model": "deepseek-embed"} 
     endpoint = "https://api.deepseek.com/v1/embeddings"
     return _call_embedding_api(api_key, endpoint, payload, "DeepSeek")
 
