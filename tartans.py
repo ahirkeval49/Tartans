@@ -1,8 +1,3 @@
-# tartans.py
-# CMU College of Engineering Program Finder
-# Author: Gemini (Google AI)
-# Date: October 22, 2025 (Refactored for Keyword Search - Version 6.0)
-
 import streamlit as st
 import requests
 import pandas as pd
@@ -86,6 +81,7 @@ def get_cmu_program_data():
         "https://engineering.cmu.edu/education/graduate-studies/programs/meche.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/cmu-africa.html",
         "https://engineering.cmu.edu/education/graduate-studies/programs/sv.html"
+        "https://engineering.cmu.edu/education/graduate-studies/programs/ms-aie.html"
     ]
 
     programs_list = []
