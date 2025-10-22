@@ -1,7 +1,3 @@
-# tartans.py
-# CMU Engineering Program Conversational Advisor
-# Author: Gemini (Google AI)
-# Date: October 22, 2025 (Conversational RAG Version - v7.0)
 
 import streamlit as st
 import requests
@@ -416,31 +412,6 @@ def filter_programs_by_keywords(keywords: List[str], df_programs: pd.DataFrame, 
 # --- MAIN APPLICATION ---
 def main():
     st.title("🤖 CMU Engineering AI Advisor")
-
-    # --- Sidebar for Provider Selection ---
-    with st.sidebar:
-        st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", width='stretch')
-        st.header("Configuration")
-        available_providers = []
-        # Check secrets more robustly
-        if "DEEPSEEK_API_KEY" in st.secrets and st.secrets.DEEPSEEK_API_KEY:
-             available_providers.append("DeepSeek")
-        if "GEMINI_API_KEY" in st.secrets and st.secrets.GEMINI_API_KEY:
-             available_providers.append("Google Gemini")
-
-        if not available_providers:
-            st.error("No valid AI provider API key found in Streamlit Secrets."); st.stop()
-
-        default_provider = "Google Gemini" if "Google Gemini" in available_providers else available_providers[0]
-        # Ensure default index is valid
-        default_idx = available_providers.index(default_provider) if default_provider in available_providers else 0
-        ai_provider = st.selectbox("Choose AI Model", available_providers, index=default_idx)
-        st.caption(f"Using {ai_provider} for conversation and analysis.")
-        # Add button to clear cache for debugging
-        if st.button("Clear App Cache"):
-             st.cache_data.clear()
-             st.cache_resource.clear()
-             st.success("App cache cleared. Please refresh the page.")
 
 
     # Get API key based on selection
