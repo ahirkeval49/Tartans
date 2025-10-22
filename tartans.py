@@ -1,7 +1,7 @@
 # tartans.py
 # CMU Engineering Program Conversational Advisor
 # Author: Gemini (Google AI)
-# Date: October 22, 2025 (Conversational RAG, No Sidebar - Version 7.1)
+# Date: October 22, 2025 (Conversational RAG, No Sidebar - Version 7.2)
 
 import streamlit as st
 import requests
@@ -20,7 +20,6 @@ st.set_page_config(
 )
 
 # --- UTILITIES ---
-# (Keep robust_request, extract_contact_info, clean_text functions exactly as before)
 def robust_request(url: str, headers: Dict[str, str], timeout: int = 15) -> Optional[requests.Response]:
     """Handles HTTP requests, returns Response object."""
     try:
@@ -73,7 +72,6 @@ def clean_text(text):
     return cleaned_text.strip()
 
 # --- DATA SCRAPING & PROCESSING ---
-# (Keep get_cmu_program_data function exactly as before)
 @st.cache_data(ttl=86400) # Cache data for 24 hours
 def get_cmu_program_data():
     """Scrapes CMU program data and returns a DataFrame."""
@@ -217,7 +215,6 @@ def get_cmu_program_data():
 
 
 # --- AI PROVIDER (CHAT) FUNCTIONS ---
-# (Keep _call_deepseek_chat_api and _call_gemini_chat_api functions exactly as before)
 def _call_deepseek_chat_api(api_key: str, messages: List[Dict[str, str]], temp: float = 0.5, max_tokens: int = 1500) -> str:
     """Calls DeepSeek chat API."""
     endpoint = "https://api.deepseek.com/v1/chat/completions"
@@ -335,7 +332,6 @@ def _call_gemini_chat_api(api_key: str, messages: List[Dict[str, str]], temp: fl
 
 
 # --- HELPER FOR AI INTERACTION ---
-# (Keep get_ai_response function exactly as before)
 def get_ai_response(provider: str, api_key: str, messages: List[Dict[str, str]]) -> str:
     """Gets response from the selected AI provider."""
     # Define system prompt here
@@ -360,17 +356,13 @@ Your Goals:
 
 
     if provider == "DeepSeek":
-        # DeepSeek often works better with the system prompt integrated into the first user message or implicitly.
-        # Let's try sending it as OpenAI format expects.
         return _call_deepseek_chat_api(api_key, conversation)
     elif provider == "Google Gemini":
-        # Gemini handles system prompt separately.
         return _call_gemini_chat_api(api_key, conversation)
     else:
         return "Error: Invalid AI provider selected."
 
 # --- KEYWORD FILTERING ---
-# (Keep filter_programs_by_keywords function exactly as before)
 def filter_programs_by_keywords(keywords: List[str], df_programs: pd.DataFrame, degree_level: str) -> pd.DataFrame:
     """Filters DataFrame based on keywords and degree."""
     if not keywords or df_programs.empty:
@@ -386,32 +378,26 @@ def filter_programs_by_keywords(keywords: List[str], df_programs: pd.DataFrame, 
     df_filtered['search_text'] = (df_filtered['name'].astype(str) + ' ' + df_filtered['description'].astype(str)).str.lower()
 
     # Create a regex pattern for keywords - match whole words if possible, be generous
-    # Example: 'robotics' becomes r'\brobotics\b'. Handle multi-word keywords.
     patterns = []
     for k in keywords:
-         # Escape special regex characters in the keyword
          escaped_k = re.escape(k)
-         # Try to match whole word, fallback to substring if it contains spaces etc.
          if ' ' not in k and '-' not in k:
               patterns.append(r'\b' + escaped_k + r'\b')
-         else: # For multi-word or hyphenated, just do substring match
+         else:
               patterns.append(escaped_k)
 
-    # Combine patterns with OR (|)
     keyword_regex = '|'.join(patterns)
 
     # Apply the regex search
     try:
-        # Ensure na=False to handle potential NaN values in search_text gracefully
         matches_mask = df_filtered['search_text'].str.contains(keyword_regex, case=False, regex=True, na=False)
         print(f"Filtering resulted in {matches_mask.sum()} matches.")
         return df_filtered[matches_mask]
     except Exception as e:
         print(f"Error during regex filtering: {e}. Falling back to simple 'in' check.")
-        # Fallback to simple 'in' check if regex fails
-        keywords_lower = [k.lower() for k in keywords] # Ensure keywords are lower for simple check
+        keywords_lower = [k.lower() for k in keywords]
         def check_match_simple(text):
-             if pd.isna(text): return False # Handle NaN
+             if pd.isna(text): return False
              return any(k in text for k in keywords_lower)
         matches_mask_simple = df_filtered['search_text'].apply(check_match_simple)
         print(f"Fallback filtering resulted in {matches_mask_simple.sum()} matches.")
@@ -423,7 +409,8 @@ def main():
     # Set title with CMU logo
     col1, col2 = st.columns([1, 5])
     with col1:
-        st.image("https://www.cmu.edu/brand/brand-guidelines/assets/images/wordmarks-and-initials/cmu-wordmark-stacked-r-c.png", width=100)
+        # Use the new header image
+        st.image("cit_triangles.png", width=100) # Updated image path
     with col2:
         st.title("CMU Engineering AI Advisor")
 
@@ -432,7 +419,6 @@ def main():
     ai_provider = None
     api_key = None
 
-    # Check secrets robustly
     deepseek_ok = "DEEPSEEK_API_KEY" in st.secrets and st.secrets.DEEPSEEK_API_KEY
     gemini_ok = "GEMINI_API_KEY" in st.secrets and st.secrets.GEMINI_API_KEY
 
@@ -442,7 +428,7 @@ def main():
         api_key = st.secrets.GEMINI_API_KEY
     if deepseek_ok:
         available_providers.append("DeepSeek")
-        if not ai_provider: # If Gemini wasn't available, use DeepSeek
+        if not ai_provider:
             ai_provider = "DeepSeek"
             api_key = st.secrets.DEEPSEEK_API_KEY
 
@@ -450,12 +436,9 @@ def main():
         st.error("Configuration Error: No valid AI provider API key found in Streamlit Secrets. Please add either GEMINI_API_KEY or DEEPSEEK_API_KEY.")
         st.stop()
 
-    # --- REMOVED SIDEBAR ---
-
     # --- Load Data ---
-    @st.cache_resource # Cache the loaded dataframe for the session
+    @st.cache_resource
     def load_data():
-        # Display spinner in the main area during the initial load
         with st.spinner("Loading CMU program information... (may take a minute on first run)"):
              df = get_cmu_program_data()
         return df
@@ -470,55 +453,48 @@ def main():
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm the CMU Engineering AI Advisor. To help you find the best graduate program, could you tell me a bit about:\n\n1.  Your **academic background** (e.g., undergrad major)?\n2.  Specific **research interests or keywords** (e.g., robotics, AI, sustainability)?\n3.  Your **career goals** (e.g., industry, academia, startup)?\n4.  Are you looking for an **M.S.** or a **Ph.D.**?"}]
     if "stage" not in st.session_state:
-         st.session_state.stage = "gathering_info" # Stages: gathering_info, searching, presenting_results
+         st.session_state.stage = "gathering_info"
 
-    # Display chat messages
+    # Display chat messages with updated icon
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"], unsafe_allow_html=True) # Allow markdown links
+        # Set icon based on role
+        avatar_icon = "scotty_dynamic (1).png" if msg["role"] == "assistant" else "🧑‍🎓" # Updated assistant icon
+        with st.chat_message(msg["role"], avatar=avatar_icon): # Use avatar parameter
+            st.markdown(msg["content"], unsafe_allow_html=True)
 
     # --- Chat Input ---
     if prompt := st.chat_input("Your response..."):
         # Add user message to state and display
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="🧑‍🎓"): # User icon remains the same
             st.markdown(prompt)
 
         # Get AI response
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="scotty_dynamic (1).png"): # Updated assistant icon
             message_placeholder = st.empty()
             message_placeholder.markdown("Thinking...")
 
             # --- AI LOGIC ---
-            # 1. Send current conversation history to AI
             ai_raw_response = get_ai_response(ai_provider, api_key, st.session_state.messages)
 
-            # Check for AI errors before proceeding
             if ai_raw_response.startswith("AI Error:"):
                  message_placeholder.error(ai_raw_response)
-                 # Remove the failed assistant message placeholder if needed or just leave the error
-                 st.session_state.messages.append({"role": "assistant", "content": ai_raw_response}) # Log error in history
-                 st.stop() # Stop further processing on error
+                 st.session_state.messages.append({"role": "assistant", "content": ai_raw_response})
+                 st.stop()
 
-            # 2. Check if AI indicates it's ready to search (more robust check)
             search_trigger_phrases = ["i will search", "let me look for", "finding programs",
                                       "based on that, i can search", "now i will find programs",
                                       "okay, searching now", "based on our conversation, i'll look"]
-            # AI might just acknowledge understanding before searching, check for short response + stage
             is_likely_search_trigger = any(phrase in ai_raw_response.lower() for phrase in search_trigger_phrases) or \
-                                       (len(ai_raw_response.split()) < 40 and st.session_state.stage == "gathering_info") # Increased threshold slightly
+                                       (len(ai_raw_response.split()) < 40 and st.session_state.stage == "gathering_info")
 
             if is_likely_search_trigger and st.session_state.stage == "gathering_info":
                 st.session_state.stage = "searching"
-                # Display AI's acknowledgement message before showing the search status
                 message_placeholder.markdown(ai_raw_response)
-                # Add the acknowledgement to history
                 st.session_state.messages.append({"role": "assistant", "content": ai_raw_response})
 
-                # Show a status message below the chat while searching
                 search_status = st.status("Extracting key info and finding relevant programs...", expanded=True)
 
-                # --- Extract Keywords and Degree using AI ---
                 keyword_extraction_prompt = f"""Review the following conversation history between an Advisor Bot and a student. Extract two pieces of information:
 1. The desired **degree level** (Must be exactly "M.S." or "Ph.D."). If unsure, state "Unknown".
 2. A comma-separated list of 3-7 specific **keywords** representing the student's core academic/research interests mentioned (e.g., robotics, semiconductor physics, energy policy). Prioritize technical terms or specific fields. If no specific keywords are mentioned, state "None".
@@ -537,7 +513,6 @@ Keyword1, Keyword2, Keyword3, ...
                 print("\n--- Keyword Extraction Attempt ---")
                 print("Raw extraction response:", extracted_info_raw)
 
-                # --- Parse Extraction Results ---
                 degree_level_extracted = None
                 keywords_list = []
                 try:
@@ -546,7 +521,7 @@ Keyword1, Keyword2, Keyword3, ...
                         potential_degree = lines[0].strip().upper().replace('.', '')
                         if potential_degree in ["MS", "M S"]: degree_level_extracted = "M.S."
                         elif potential_degree == "PHD": degree_level_extracted = "Ph.D."
-                        elif potential_degree == "UNKNOWN": degree_level_extracted = None # Explicit unknown
+                        elif potential_degree == "UNKNOWN": degree_level_extracted = None
                         else: print(f"Warning: AI extracted unclear degree '{lines[0].strip()}'")
 
                         if len(lines) > 1 and lines[1].strip().lower() != "none":
@@ -559,51 +534,43 @@ Keyword1, Keyword2, Keyword3, ...
                 except Exception as e:
                      print(f"Error parsing AI keyword extraction: {e}. Raw: {extracted_info_raw}")
 
-                # --- Fallback/Refinement for Degree/Keywords ---
                 if not degree_level_extracted:
                      search_status.write("AI couldn't determine degree level. Scanning conversation...")
-                     for msg in reversed(st.session_state.messages): # Scan conversation history again
+                     for msg in reversed(st.session_state.messages):
                           content_lower = msg["content"].lower()
-                          if "ph.d." in content_lower or "phd" in content_lower or "doctoral" in content_lower:
-                               degree_level_extracted = "Ph.D."; break
-                          if "m.s." in content_lower or "ms" in content_lower or "master" in content_lower:
-                               degree_level_extracted = "M.S."; break
+                          if "ph.d." in content_lower or "phd" in content_lower or "doctoral" in content_lower: degree_level_extracted = "Ph.D."; break
+                          if "m.s." in content_lower or "ms" in content_lower or "master" in content_lower: degree_level_extracted = "M.S."; break
                      if not degree_level_extracted:
-                          degree_level_extracted = "M.S." # Final fallback
+                          degree_level_extracted = "M.S."
                           search_status.write("Could not determine degree level from conversation, defaulting to M.S.")
                      else:
                           search_status.write(f"Found degree level from conversation: {degree_level_extracted}")
 
                 if not keywords_list:
                      search_status.write("AI couldn't extract specific keywords. Filtering broadly by degree only.")
-                     # Only filter by degree if keywords fail
                      filtered_df = df_programs[df_programs['degree_type'] == degree_level_extracted].copy()
                 else:
                      search_status.write(f"Filtering for **{degree_level_extracted}** programs matching: *{', '.join(keywords_list)}*...")
                      filtered_df = filter_programs_by_keywords(keywords_list, df_programs, degree_level_extracted)
 
 
-                # --- Prepare Context for Final Analysis ---
                 if filtered_df.empty:
                     final_response = f"Unfortunately, I couldn't find any CMU Engineering **{degree_level_extracted}** programs matching the keywords '{', '.join(keywords_list)}' in the scraped data. Would you like to try different keywords?"
-                    st.session_state.stage = "gathering_info" # Go back to gathering info
+                    st.session_state.stage = "gathering_info"
                     print("Filtering resulted in zero programs.")
                     search_status.update(label="Search complete. No matching programs found.", state="warning")
                 else:
                     search_status.write(f"Found {len(filtered_df)} potential programs. Preparing context for final analysis...")
                     print(f"Found {len(filtered_df)} potential programs after filtering.")
-                    # Prepare context
                     context_for_ai = ""
-                    token_limit = 8000 # More context for better analysis
+                    token_limit = 8000
                     current_tokens = 0
                     program_snippets = []
 
-                    # Sort filtered results slightly? Maybe by name? Keep simple for now.
                     for _, row in filtered_df.iterrows():
-                         # Ensure description is not the placeholder
                          if row['description'] != 'No detailed description extracted.':
                               program_info = f"### Program: {row['name']}\n**Degree:** {row['degree_type']}\n**URL:** {row['url']}\n**Contact:** {row['contact']}\n\n**Description Snippet:**\n{row['description']}\n\n---\n\n"
-                              program_tokens = len(program_info.split()) # Rough estimate
+                              program_tokens = len(program_info.split())
                               if current_tokens + program_tokens < token_limit:
                                    program_snippets.append(program_info)
                                    current_tokens += program_tokens
@@ -619,7 +586,6 @@ Keyword1, Keyword2, Keyword3, ...
                          print("Context for AI analysis was empty after filtering (likely descriptions were empty).")
                          search_status.update(label="Search complete. Found programs but lacked description.", state="warning")
                     else:
-                        # --- Final AI Call for Recommendations ---
                         search_status.update(label=f"Analyzing {len(program_snippets)} program descriptions...", state="running")
                         recommendation_prompt = f"""Based on the complete conversation history provided below and the following relevant program description snippets extracted from the CMU Engineering website, please act as the CMU Engineering Advisor Bot.
 
@@ -635,8 +601,6 @@ Your task is to recommend the top 1-3 programs for the student and explain why, 
 
 **Your Recommendation and Analysis:**
 """
-                        # Create payload for final call - DO NOT include the massive context prompt in history itself
-                        # Send the conversation history leading up to the search trigger
                         final_call_history = st.session_state.messages + [{"role": "user", "content": recommendation_prompt}]
 
                         print("\n--- Final Recommendation Call ---")
@@ -646,16 +610,13 @@ Your task is to recommend the top 1-3 programs for the student and explain why, 
                         search_status.update(label="Analysis complete!", state="complete")
 
             else:
-                # AI is asking follow-up or giving intermediate response
                 final_response = ai_raw_response
-                st.session_state.stage = "gathering_info" # Stay in info gathering
+                st.session_state.stage = "gathering_info"
 
-            # Display final AI response and add to history
-            message_placeholder.markdown(final_response, unsafe_allow_html=True) # Allow markdown links
+            message_placeholder.markdown(final_response, unsafe_allow_html=True)
             st.session_state.messages.append({"role": "assistant", "content": final_response})
-            # Rerun to clear status message if search finished
             if st.session_state.stage == "presenting_results" or (st.session_state.stage == "gathering_info" and 'search_status' in locals()):
-                 time.sleep(0.1) # Short delay before rerun
+                 time.sleep(0.1)
                  st.rerun()
 
 
