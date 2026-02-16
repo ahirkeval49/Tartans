@@ -2,11 +2,11 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-import pandas as pd
 import json
 import os
 import time
 from datetime import datetime, timedelta
+import re
 
 # --- CONFIGURATION ---
 ST_SECRETS_KEY = "GEMINI_API_KEY"
@@ -26,7 +26,6 @@ class CMUScraper:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # CMU Department Graduate Program Landing Pages
         self.urls = [
             "https://engineering.cmu.edu/education/graduate-studies/programs/index.html",
             "https://engineering.cmu.edu/education/graduate-studies/programs/bme.html",
@@ -44,159 +43,135 @@ class CMUScraper:
         ]
 
     def _clean_text(self, text):
-        """Standardizes text: removes extra spaces, newlines, and non-ascii junk."""
         if not text: return ""
         text = text.replace('\xa0', ' ')
         return " ".join(text.split())
 
     def _extract_content(self, soup):
-        """Targeted extraction for CMU Engineering templates."""
-        # CMU usually puts main content in 'main' role or specific IDs
         content = soup.find('main') or soup.find(id='content') or soup.find(class_='content')
-        
         if content:
-            # Remove navs, sidebars, scripts within the main content if they exist
             for garbage in content.find_all(['nav', 'script', 'style', 'aside', 'footer']):
                 garbage.decompose()
             return self._clean_text(content.get_text(" ", strip=True))
         return ""
 
     def scrape(self):
-        """Main scraping loop."""
+        """Scrapes silently in the background."""
         programs = []
-        progress_bar = st.progress(0, text="Updating database...")
-        
-        for idx, url in enumerate(self.urls):
+        # Removed st.progress to keep it hidden from frontend users
+        for url in self.urls:
             try:
-                # Update UI
-                progress_bar.progress((idx + 1) / len(self.urls), text=f"Scraping {url.split('/')[-1]}...")
-                
                 resp = requests.get(url, headers=self.headers, timeout=10)
-                if resp.status_code != 200:
-                    continue
-
+                if resp.status_code != 200: continue
                 soup = BeautifulSoup(resp.content, 'html.parser')
                 
-                # Metadata
-                title = soup.title.string if soup.title else "CMU Program"
-                dept_name = self._clean_text(soup.find('h1').text) if soup.find('h1') else "Unknown Department"
+                dept_name = self._clean_text(soup.find('h1').text) if soup.find('h1') else "General Program Info"
                 content = self._extract_content(soup)
                 
-                # Logic: One page might contain info for both MS and PhD.
-                # We will store the page as a knowledge unit.
                 programs.append({
                     "department": dept_name,
                     "url": url,
-                    "content": content[:15000] # Cap text length per page to avoid outliers
+                    "content": content
                 })
-                
-                # Polite delay
-                time.sleep(0.5)
-                
-            except Exception as e:
-                print(f"Failed to scrape {url}: {e}")
-        
-        progress_bar.empty()
+                time.sleep(0.5) 
+            except Exception:
+                pass # Silently fail on individual pages to keep app running
         return programs
 
 # --- DATA MANAGER ---
 def get_program_data():
-    """
-    Checks for local JSON. 
-    If exists and fresh (<24h) -> Load it.
-    Else -> Scrape, Save, Load.
-    """
     scraper = CMUScraper()
     
-    # Check if file exists
+    # Check cache
     if os.path.exists(DATA_FILE):
-        file_mod_time = datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
-        if datetime.now() - file_mod_time < timedelta(hours=CACHE_DURATION_HOURS):
-            try:
+        try:
+            file_mod_time = datetime.fromtimestamp(os.path.getmtime(DATA_FILE))
+            if datetime.now() - file_mod_time < timedelta(hours=CACHE_DURATION_HOURS):
                 with open(DATA_FILE, 'r') as f:
-                    data = json.load(f)
-                return data
-            except:
-                pass # If file is corrupted, fall through to re-scrape
+                    return json.load(f)
+        except:
+            pass 
 
-    # If we are here, we need to scrape
-    with st.spinner("Refreshing CMU Program Database (runs once per day)..."):
+    # If cache miss, scrape (silently with generic spinner)
+    with st.spinner("Initializing Advisor Database..."):
         data = scraper.scrape()
         
-    # Save to file
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f)
         
     return data
 
+# --- RETRIEVAL ENGINE (The fix for 429 Errors) ---
+def retrieve_relevant_chunks(query, data, top_k=4):
+    """
+    Instead of sending ALL data, we score each department's content 
+    based on how many times the user's keywords appear.
+    """
+    query_tokens = set(re.findall(r'\w+', query.lower()))
+    
+    scores = []
+    for item in data:
+        score = 0
+        text_lower = item['content'].lower()
+        dept_lower = item['department'].lower()
+        
+        # 1. Exact Department Match gets huge boost
+        if dept_lower in query.lower():
+            score += 100
+            
+        # 2. Keyword frequency
+        for token in query_tokens:
+            if len(token) > 3: # Ignore small words like 'the', 'how'
+                count = text_lower.count(token)
+                score += count
+        
+        scores.append((score, item))
+    
+    # Sort by relevance and take top K
+    scores.sort(key=lambda x: x[0], reverse=True)
+    return [item for score, item in scores[:top_k]]
+
 # --- GEMINI AI ENGINE ---
-def generate_response(user_input, chat_history, context_data):
-    """
-    Constructs the prompt with the FULL context and sends to Gemini.
-    """
+def generate_response(user_input, chat_history, all_data):
     api_key = st.secrets.get(ST_SECRETS_KEY)
     if not api_key:
-        return "Error: Gemini API Key not found in secrets."
+        return "Error: API Key missing."
 
     genai.configure(api_key=api_key)
     
-    # 1. Format the context from our data
+    # 1. RETRIEVE only relevant data (Fixes 429 Error)
+    relevant_data = retrieve_relevant_chunks(user_input, all_data)
+    
+    # 2. Build Context String
     context_str = ""
-    for item in context_data:
-        context_str += f"\n--- SOURCE START: {item['department']} ---\n"
-        context_str += f"URL: {item['url']}\n"
-        context_str += f"CONTENT: {item['content']}\n"
-        context_str += "--- SOURCE END ---\n"
+    for item in relevant_data:
+        context_str += f"\n[SOURCE: {item['department']} | URL: {item['url']}]\n{item['content'][:8000]}\n" # Cap chunk size just in case
 
-    # 2. System Prompt with Visual Instructions
+    # 3. System Prompt
     system_instruction = f"""
-    You are the 'CMU Engineering Advisor', a helpful assistant for prospective graduate students.
+    You are the CMU Engineering Advisor. Answer the user's question using ONLY the context provided below.
     
-    YOUR KNOWLEDGE BASE:
-    I have provided the full text content of the CMU College of Engineering graduate program pages below. 
-    Answer the user's questions based ONLY on this provided context. If the answer isn't in the context, say you don't know.
+    - If the answer is not in the context, say "I don't have that specific information in my database."
+    - Be professional, concise, and helpful.
+    - Always cite the specific Department or URL when providing details.
     
-    BEHAVIOR:
-    - Be enthusiastic and welcoming.
-    - If the user asks for program recommendations, analyze the provided context to find the best matches based on their interests.
-    - Always provide the specific URL when mentioning a program.
-    - Analyze the user's intent. If they are asking about specific research areas (e.g., "AI", "Robotics", "Sustainability"), cross-reference all departments.
-    
-    VISUAL AIDS:
-    - Assess if the user would understand the response better with a diagram.
-    - Insert a diagram tag by adding 
-
-[Image of X]
- where X is a specific query.
-    - Examples: , , 
-
-[Image of neural network architecture]
-.
-    - Only use tags if they add instructional value.
-    
-    CONTEXT DATA:
+    CONTEXT:
     {context_str}
     """
 
-    # 3. Build Model
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        system_instruction=system_instruction
-    )
-
-    # 4. Convert Streamlit history to Gemini history
+    # 4. Convert History
     gemini_history = []
     for msg in chat_history:
         role = "user" if msg["role"] == "user" else "model"
         gemini_history.append({"role": role, "parts": [msg["content"]]})
 
-    # 5. Generate
     try:
+        model = genai.GenerativeModel(MODEL_NAME, system_instruction=system_instruction)
         chat = model.start_chat(history=gemini_history)
         response = chat.send_message(user_input)
         return response.text
     except Exception as e:
-        return f"I encountered an error connecting to Gemini: {str(e)}"
+        return f"Service is busy. Please try again in a moment. (Error: {str(e)})"
 
 # --- MAIN UI ---
 def main():
@@ -205,40 +180,34 @@ def main():
         st.image("https://upload.wikimedia.org/wikipedia/en/thumb/b/bb/Carnegie_Mellon_University_seal.svg/1200px-Carnegie_Mellon_University_seal.svg.png", width=70)
     with col2:
         st.title("CMU Engineering Advisor")
-        st.caption("Powered by Gemini 1.5 • Daily Synchronized Data")
+        # Caption removed as requested
 
-    # Load Data (Instant if cached, Slower if < 24h old)
     program_data = get_program_data()
     
     if not program_data:
-        st.error("Could not retrieve program data. Please check your internet connection.")
+        st.error("Unable to load data.")
         st.stop()
 
-    # Session State
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": "Hello! I can help you navigate the Graduate Programs at CMU Engineering. Are you interested in a Master's or Ph.D., or do you have a specific research interest in mind?"}
+            {"role": "assistant", "content": "Hello! I can help you explore graduate programs at CMU Engineering. What are your research interests?"}
         ]
 
-    # Display Chat
     for msg in st.session_state.messages:
         avatar = "🎓" if msg["role"] == "assistant" else "👤"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
-    # Input
-    if prompt := st.chat_input("Ask about programs, admission requirements, or research..."):
-        # User Message
+    if prompt := st.chat_input("Ask about programs..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="👤"):
             st.markdown(prompt)
 
-        # Assistant Response
         with st.chat_message("assistant", avatar="🎓"):
             with st.spinner("Thinking..."):
                 response_text = generate_response(
                     prompt, 
-                    st.session_state.messages[:-1], # Pass history excluding current prompt (Gemini handles the prompt separately in send_message)
+                    st.session_state.messages[:-1], 
                     program_data
                 )
                 st.markdown(response_text)
