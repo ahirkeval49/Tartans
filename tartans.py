@@ -1,18 +1,19 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
 import json
 import os
 import time
 from datetime import datetime, timedelta
 import re
+from openai import OpenAI
 
 # --- CONFIGURATION ---
-ST_SECRETS_KEY = "GEMINI_API_KEY"
+ST_SECRETS_KEY = "DEEPSEEK_API_KEY"
 DATA_FILE = "cmu_programs_data.json"
 CACHE_DURATION_HOURS = 24
-MODEL_NAME = "gemini-2.0-flash" 
+MODEL_NAME = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 st.set_page_config(
     page_title="CMU Engineering Advisor",
@@ -131,13 +132,17 @@ def retrieve_relevant_chunks(query, data, top_k=4):
     scores.sort(key=lambda x: x[0], reverse=True)
     return [item for score, item in scores[:top_k]]
 
-# --- GEMINI AI ENGINE ---
+# --- DEEPSEEK AI ENGINE ---
 def generate_response(user_input, chat_history, all_data):
     api_key = st.secrets.get(ST_SECRETS_KEY)
     if not api_key:
         return "Error: API Key missing."
 
-    genai.configure(api_key=api_key)
+    # Initialize DeepSeek client
+    client = OpenAI(
+        api_key=api_key,
+        base_url=DEEPSEEK_BASE_URL
+    )
     
     # 1. RETRIEVE only relevant data (Fixes 429 Error)
     relevant_data = retrieve_relevant_chunks(user_input, all_data)
@@ -148,28 +153,35 @@ def generate_response(user_input, chat_history, all_data):
         context_str += f"\n[SOURCE: {item['department']} | URL: {item['url']}]\n{item['content'][:8000]}\n" # Cap chunk size just in case
 
     # 3. System Prompt
-    system_instruction = f"""
-    You are the CMU Engineering Advisor. Answer the user's question using ONLY the context provided below.
-    
-    - If the answer is not in the context, say "I don't have that specific information in my database."
-    - Be professional, concise, and helpful.
-    - Always cite the specific Department or URL when providing details.
-    
-    CONTEXT:
-    {context_str}
-    """
+    system_prompt = f"""
+You are the CMU Engineering Advisor. Answer the user's question using ONLY the context provided below.
 
-    # 4. Convert History
-    gemini_history = []
+- If the answer is not in the context, say "I don't have that specific information in my database."
+- Be professional, concise, and helpful.
+- Always cite the specific Department or URL when providing details.
+
+CONTEXT:
+{context_str}
+"""
+
+    # 4. Build conversation messages
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add chat history (excluding the current user message)
     for msg in chat_history:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    # Add current user input
+    messages.append({"role": "user", "content": user_input})
 
     try:
-        model = genai.GenerativeModel(MODEL_NAME, system_instruction=system_instruction)
-        chat = model.start_chat(history=gemini_history)
-        response = chat.send_message(user_input)
-        return response.text
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"Service is busy. Please try again in a moment. (Error: {str(e)})"
 
